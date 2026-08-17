@@ -851,3 +851,137 @@ select:focus {
         padding: 28px
     }
 }
+
+/* Board v3: tactile animated cells + explicit Enter navigation */
+.board-stage {
+    position: relative;
+    overflow: hidden
+}
+
+.board-stage:before,
+.board-stage:after {
+    content: "";
+    position: absolute;
+    width: 170px;
+    height: 170px;
+    border: 1px solid rgba(94, 234, 212, .08);
+    border-radius: 28px;
+    transform: rotate(35deg);
+    animation: boardCube 9s ease-in-out infinite;
+    pointer-events: none
+}
+
+.board-stage:before {
+    right: -70px;
+    top: 70px
+}
+
+.board-stage:after {
+    left: -85px;
+    bottom: -100px;
+    animation-delay: -4s
+}
+
+.board-stage>* {
+    position: relative;
+    z-index: 1
+}
+
+.bingo-board.editing {
+    padding: 12px;
+    border-radius: 26px;
+    background: linear-gradient(145deg, rgba(14, 30, 50, .9), rgba(7, 18, 32, .72));
+    border: 1px solid rgba(94, 234, 212, .13);
+    box-shadow: inset 0 0 35px rgba(45, 212, 191, .035), 0 25px 60px rgba(0, 0, 0, .22)
+}
+
+.bingo-board.editing input {
+    border: 1px solid rgba(94, 234, 212, .12);
+    background: linear-gradient(145deg, #12243a, #0a1729);
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, .025), 0 5px 12px rgba(0, 0, 0, .18);
+    transition: border-color .18s, box-shadow .18s, transform .18s, background .18s
+}
+
+.bingo-board.editing input:hover {
+    border-color: rgba(94, 234, 212, .3);
+    transform: translateY(-2px)
+}
+
+.bingo-board.editing input:focus {
+    outline: none;
+    border-color: #5eead4;
+    background: linear-gradient(145deg, #16334a, #0d2035);
+    box-shadow: 0 0 0 3px rgba(94, 234, 212, .09), 0 12px 24px rgba(20, 184, 166, .13);
+    transform: translateY(-4px) scale(1.025)
+}
+
+.bingo-board.editing input::selection {
+    background: rgba(94, 234, 212, .3)
+}
+
+.board-message {
+    margin: 10px 0;
+    padding: 11px 13px;
+    border-radius: 12px;
+    background: rgba(20, 184, 166, .08);
+    border: 1px solid rgba(94, 234, 212, .14);
+    color: #a7f3d0;
+    font-size: .78rem;
+    font-weight: 700
+}
+
+.ready-submit {
+    position: relative;
+    overflow: hidden
+}
+
+.ready-submit:after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, .18), transparent 70%);
+    transform: translateX(-110%);
+    animation: submitShine 3.2s ease-in-out infinite
+}
+
+.number-grid button {
+    cursor: pointer
+}
+
+.number-grid button:disabled {
+    cursor: not-allowed
+}
+
+@keyframes boardCube {
+
+    0%,
+    100% {
+        transform: rotate(35deg) translate(0, 0)
+    }
+
+    50% {
+        transform: rotate(47deg) translate(18px, -22px)
+    }
+}
+
+@keyframes submitShine {
+
+    0%,
+    65% {
+        transform: translateX(-110%)
+    }
+
+    85%,
+    100% {
+        transform: translateX(110%)
+    }
+}
+
+@media(prefers-reduced-motion:reduce) {
+
+    .board-stage:before,
+    .board-stage:after,
+    .ready-submit:after {
+        animation: none
+    }
+}
