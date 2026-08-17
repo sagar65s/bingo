@@ -13,7 +13,7 @@ function Auth({ onLogin }) {
   const submit = async e => {
     e.preventDefault(); setError("");
     try {
-      const data = await api(mode === "login" ? "/api/auth/login" : "/api/auth/register", { method: "POST", body: JSON.stringify(form) });
+      const data = await api(mode === "login" ? "/auth/login" : "/uth/register", { method: "POST", body: JSON.stringify(form) });
       localStorage.setItem("bingo_token", data.token); onLogin(data.user);
     } catch (err) { setError(err.message) }
   };
@@ -130,7 +130,7 @@ function Game({ user, room, game, board, setBoard, submitBoard, onLogout }) {
 export default function App() {
   const [user, setUser] = useState(null);
   useEffect(() => {
-    if (localStorage.getItem("bingo_token")) api("/api/auth/me").then(d => setUser(d.user)).catch(() => localStorage.removeItem("bingo_token"));
+    if (localStorage.getItem("bingo_token")) api("/auth/me").then(d => setUser(d.user)).catch(() => localStorage.removeItem("bingo_token"));
   }, []);
   const logout = () => { localStorage.removeItem("bingo_token"); setUser(null) };
   return user ? <Dashboard user={user} onLogout={logout} /> : <Auth onLogin={setUser} />;
