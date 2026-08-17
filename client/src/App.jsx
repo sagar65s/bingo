@@ -40,15 +40,15 @@ function Dashboard({user,onLogout}) {
   const [socket,setSocket]=useState(null),[room,setRoom]=useState(null),[game,setGame]=useState(null);
   const [roomName,setRoomName]=useState("Friends Room"),[password,setPassword]=useState("123456"),[maxPlayers,setMaxPlayers]=useState(4);
   const [joinId,setJoinId]=useState(""),[joinPassword,setJoinPassword]=useState(""),[message,setMessage]=useState("");
-  const [board,setBoard]=useState(null),[call,setCall]=useState(""),[gameMessage,setGameMessage]=useState("");
+  const [board,setBoard]=useState(null),[call,setCall]=useState("");
 
   useEffect(()=>{
     const s=createSocket();
     setSocket(s); window.__bingoSocket=s;
-    s.on("error:message",e=>{setMessage(e.message);setGameMessage(e.message)});
+    s.on("error:message",e=>setMessage(e.message));
     s.on("room:update",e=>setRoom(e.room));
     s.on("room:started",e=>{setRoom(e.room);setGame(e.game);s.emit("game:join",{gameId:e.game.gameId})});
-    s.on("game:state",e=>{setGame(e.game); const mine=e.game.players.find(p=>p.userId===user._id)?.board||[]; setBoard(mine.map(row=>row.map(cell=>typeof cell==="object"?cell.value:cell))); setGameMessage("")});
+    s.on("game:state",e=>{setGame(e.game); if(e.game.status==="PLAYING"||e.game.status==="BOARD_SETUP") setBoard(e.game.players.find(p=>p.userId===user._id)?.board||null)});
     s.on("game:move",e=>setGame(e.game));
     return()=>s.disconnect();
   },[user._id]);
@@ -64,16 +64,28 @@ function Dashboard({user,onLogout}) {
   const toggleReady=()=>socket?.emit("room:ready",{roomId:room.roomId,ready:!room.players.find(p=>p.userId===user._id)?.ready});
   const start=()=>socket?.emit("room:start",{roomId:room.roomId});
   const submitBoard=()=>{
-    if(!game||!board)return;
-    const numericBoard=board.map(row=>row.map(v=>Number(v)));
-    const complete=numericBoard.length===game.boardSize && numericBoard.every(row=>row.length===game.boardSize && row.every(v=>Number.isInteger(v)&&v>0));
-    if(!complete){setGameMessage("Please fill every box with a valid number before submitting.");return;}
-    setGameMessage("Submitting your board…");
-    socket.emit("game:boardSubmit",{gameId:game.gameId,board:numericBoard});
+    if(!game||!board||!socket)return;
+    const size=game.boardSize;
+    if(!Array.isArray(board)||board.length!==size||board.some(row=>!Array.isArray(row)||row.length!==size)){
+      setMessage("Please fill the complete board before submitting.");
+      return;
+    }
+    const values=board.flat().map(v=>Number(v));
+    const expected=size*size;
+    if(values.some(v=>!Number.isInteger(v)||v<1||v>expected)){
+      setMessage(`Use numbers from 1 to ${expected}.`);
+      return;
+    }
+    if(new Set(values).size!==values.length){
+      setMessage("Duplicate numbers are not allowed on your board. Each number must be used once.");
+      return;
+    }
+    socket.emit("game:boardSubmit",{gameId:game.gameId,board:board.map(row=>row.map(v=>Number(v)))});
+    setMessage("Board submitted. Waiting for the other players...");
   };
   const callNumber=()=>{if(call)socket.emit("game:numberCall",{gameId:game.gameId,number:Number(call)});setCall("")};
 
-  if(room&&game) return <Game user={user} room={room} game={game} board={board} setBoard={setBoard} submitBoard={submitBoard} gameMessage={gameMessage} onLogout={onLogout}/>;
+  if(room&&game) return <Game user={user} room={room} game={game} board={board} setBoard={setBoard} submitBoard={submitBoard} call={call} setCall={setCall} callNumber={callNumber} onLogout={onLogout}/>;
   if(room) return <Lobby user={user} room={room} toggleReady={toggleReady} start={start} onLogout={onLogout} message={message}/>;
 
   return <div className="dashboard">
@@ -118,7 +130,7 @@ function Lobby({user,room,toggleReady,start,onLogout,message}) {
   </div>
 }
 
-function Game({user,room,game,board,setBoard,submitBoard,gameMessage,onLogout}) {
+function Game({user,room,game,board,setBoard,submitBoard,onLogout}) {
   const size=game.boardSize;
   const my=game.players.find(p=>p.userId===user._id);
   const isSetup=game.status==="BOARD_SETUP";
@@ -128,22 +140,14 @@ function Game({user,room,game,board,setBoard,submitBoard,gameMessage,onLogout}) 
   const changeCell=(r,c,val)=>{
     if(!isSetup)return;
     const clean=String(val).replace(/\D/g,"").slice(0,5);
-    const next=localBoard.map(row=>[...row]); next[r][c]=clean; setBoard(next);
-    // Deliberately DO NOT move focus after typing. Enter is required.
+    const next=localBoard.map(row=>[...row]);
+    next[r][c]=clean;
+    setBoard(next);
+    // Do NOT auto-move. The user must press Enter to go to the next box.
   };
-  const onKey=(e,index)=>{
-    if(e.key==="Enter"){
-      e.preventDefault();
-      const n=Math.min(size*size-1,index+1); setActiveCell(n);
-      requestAnimationFrame(()=>document.querySelector(`[data-cell="${n}"]`)?.focus());
-    } else if(e.key==="ArrowRight"||e.key==="ArrowDown"){
-      e.preventDefault(); const n=Math.min(size*size-1,index+1); setActiveCell(n); document.querySelector(`[data-cell="${n}"]`)?.focus();
-    } else if(e.key==="ArrowLeft"||e.key==="ArrowUp"){
-      e.preventDefault(); const n=Math.max(0,index-1); setActiveCell(n); document.querySelector(`[data-cell="${n}"]`)?.focus();
-    }
-  };
+  const onKey=(e,index)=>{let n=null;if(["Enter","ArrowRight","ArrowDown"].includes(e.key))n=Math.min(size*size-1,index+1);else if(["ArrowLeft","ArrowUp"].includes(e.key))n=Math.max(0,index-1);else if(e.key==="Backspace"&&!localBoard[Math.floor(index/size)][index%size])n=Math.max(0,index-1);if(n!==null){e.preventDefault();setActiveCell(n);document.querySelector(`[data-cell="${n}"]`)?.focus()}};
   const call=(n)=>{if(isMyTurn&&game.status==="PLAYING")window.__bingoSocket?.emit("game:numberCall",{gameId:game.gameId,number:n})};
-  return <div className="game-page"><header className="topbar"><div className="brand"><span>B</span><strong>BINGO</strong></div><div className={`turn ${isMyTurn&&!isSetup?"my":""}`}>{isSetup?"ENTER YOUR BOARD":isMyTurn?"YOUR TURN":"WAITING FOR CALL"}</div><button className="ghost" onClick={onLogout}>Logout</button></header><main className="game-layout"><section className="board-panel board-stage"><div className="game-title"><div><p className="eyebrow">{room.roomId} · {game.playerCount} PLAYERS</p><h2>{game.status==="FINISHED"?"GAME OVER":`BINGO ${size}×${size}`}</h2></div><div className="progress"><b>{my?.completedLines||0}/{game.requiredLines}</b><span>LINES</span></div></div><p className="muted">{isSetup?"Enter one number per box. Typing will stay in the current box — press Enter when you want to move to the next box.":"Click a number to call it. The called number is immediately visible to everyone."}</p><div className={`bingo-board ${isSetup?"editing":""}`} style={{"--size":size}}>{localBoard.map((row,r)=>row.map((value,c)=>{const idx=r*size+c;const marked=my?.board?.[r]?.[c]?.marked;return <motion.input key={idx} data-cell={idx} className={marked?"marked":""} value={value??""} onFocus={()=>setActiveCell(idx)} onKeyDown={e=>onKey(e,idx)} onChange={e=>changeCell(r,c,e.target.value)} disabled={!isSetup} aria-label={`row ${r+1} column ${c+1}`} initial={{opacity:0,scale:.75,rotateX:-18}} animate={{opacity:1,scale:1,rotateX:0}} transition={{delay:idx*.012,type:"spring",stiffness:220,damping:18}}/>}))}</div>{gameMessage&&isSetup&&<motion.div className="board-message" initial={{opacity:0,y:8}} animate={{opacity:1,y:0}}>{gameMessage}</motion.div>}{isSetup?<motion.button whileTap={{scale:.98}} whileHover={{y:-2}} className="primary wide ready-submit" onClick={submitBoard}>✓ READY — SUBMIT MY BOARD</motion.button>:game.status==="PLAYING"&&isMyTurn?<div className="number-picker"><div className="picker-title"><b>CALL A NUMBER</b><span>Click once to call</span></div><div className="number-grid">{Array.from({length:size*size},(_,i)=>i+1).map(n=><motion.button whileTap={{scale:.9}} whileHover={{y:-3}} key={n} disabled={game.calledNumbers.includes(n)} className={game.calledNumbers.includes(n)?"called-number":""} onClick={()=>call(n)}>{n}</motion.button>)}</div></div>:null}</section><aside className="side-panel"><h3>Players</h3>{game.players.map(p=><div className={`game-player ${p.userId===game.currentTurn?"active":""}`} key={p.userId}><div className="avatar small">{p.username.slice(0,1).toUpperCase()}</div><div className="gp-name"><b>{p.username}{p.userId===user._id?" (You)":""}</b><span>{p.status}</span></div><div className="gp-score">{p.completedLines}<small>lines</small></div></div>)}<div className="called"><h3>Called numbers</h3><div className="called-list">{game.calledNumbers.length?game.calledNumbers.map(n=><span key={n}>{n}</span>):<small className="muted">No numbers called yet.</small>}</div></div>{game.status==="FINISHED"&&<div className="result-card"><h3>Final result</h3>{[...game.players].sort((a,b)=>(a.rank||99)-(b.rank||99)).map(p=><div className="result-row" key={p.userId}><span>{p.rank?`#${p.rank}`:p.status}</span><b>{p.username}</b><strong>{p.points} pts</strong></div>)}</div>}</aside></main></div>
+  return <div className="game-page"><header className="topbar"><div className="brand"><span>B</span><strong>BINGO</strong></div><div className={`turn ${isMyTurn&&!isSetup?"my":""}`}>{isSetup?"ENTER YOUR BOARD":isMyTurn?"YOUR TURN":"WAITING FOR CALL"}</div><button className="ghost" onClick={onLogout}>Logout</button></header><main className="game-layout"><section className="board-panel"><div className="game-title"><div><p className="eyebrow">{room.roomId} · {game.playerCount} PLAYERS</p><h2>{game.status==="FINISHED"?"GAME OVER":`BINGO ${size}×${size}`}</h2></div><div className="progress"><b>{my?.completedLines||0}/{game.requiredLines}</b><span>LINES</span></div></div><p className="muted">{isSetup?"Enter your own numbers. Type a number, then press Enter to move to the next box. Arrow keys also navigate. Other players cannot see your board until the match begins.":"Click a number to call it. The called number is immediately visible to everyone and marks that number on every opponent board."}</p><div className={`bingo-board ${isSetup?"editing":""}`} style={{"--size":size}}>{localBoard.map((row,r)=>row.map((value,c)=>{const idx=r*size+c;const marked=my?.board?.[r]?.[c]?.marked;return <input key={idx} data-cell={idx} className={marked?"marked":""} value={value??""} onFocus={()=>setActiveCell(idx)} onKeyDown={e=>onKey(e,idx)} onChange={e=>changeCell(r,c,e.target.value)} disabled={!isSetup} aria-label={`row ${r+1} column ${c+1}`}/>;}))}</div>{isSetup?<button className="primary wide" onClick={submitBoard}>✓ READY — SUBMIT MY BOARD</button>:game.status==="PLAYING"&&isMyTurn?<div className="number-picker"><div className="picker-title"><b>CALL A NUMBER</b><span>Click once to call</span></div><div className="number-grid">{Array.from({length:size*size},(_,i)=>i+1).map(n=><button key={n} disabled={game.calledNumbers.includes(n)} className={game.calledNumbers.includes(n)?"called-number":""} onClick={()=>call(n)}>{n}</button>)}</div></div>:null}</section><aside className="side-panel"><h3>Players</h3>{game.players.map(p=><div className={`game-player ${p.userId===game.currentTurn?"active":""}`} key={p.userId}><div className="avatar small">{p.username.slice(0,1).toUpperCase()}</div><div className="gp-name"><b>{p.username}{p.userId===user._id?" (You)":""}</b><span>{p.status}</span></div><div className="gp-score">{p.completedLines}<small>lines</small></div></div>)}<div className="called"><h3>Called numbers</h3><div className="called-list">{game.calledNumbers.length?game.calledNumbers.map(n=><span key={n}>{n}</span>):<small className="muted">No numbers called yet.</small>}</div></div>{game.status==="FINISHED"&&<div className="result-card"><h3>Final result</h3>{[...game.players].sort((a,b)=>(a.rank||99)-(b.rank||99)).map(p=><div className="result-row" key={p.userId}><span>{p.rank?`#${p.rank}`:p.status}</span><b>{p.username}</b><strong>{p.points} pts</strong></div>)}</div>}</aside></main></div>
 }
 
 export default function App(){
