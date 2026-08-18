@@ -1,4 +1,4 @@
-import "./board-v5.css";
+import "./board-v6.css";
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "./services/api";
@@ -20,7 +20,16 @@ function Dashboard({ user, onLogout }) {
   const [roomName, setRoomName] = useState("Friends Room"), [password, setPassword] = useState("123456"), [maxPlayers, setMaxPlayers] = useState(4);
   const [joinId, setJoinId] = useState(""), [joinPassword, setJoinPassword] = useState(""), [message, setMessage] = useState("");
   const [board, setBoard] = useState(null);
-  useEffect(() => { const s = createSocket(); setSocket(s); window.__bingoSocket = s; s.on("error:message", e => setMessage(e.message)); s.on("room:update", e => setRoom(e.room)); s.on("room:started", e => { setRoom(e.room); setGame(e.game); s.emit("game:join", { gameId: e.game.gameId }) }); s.on("game:state", e => { setGame(e.game); if (e.game.status === "PLAYING" || e.game.status === "BOARD_SETUP") setBoard(e.game.players.find(p => p.userId === user._id)?.board || null) }); s.on("game:move", e => setGame(e.game)); return () => s.disconnect() }, [user._id]);
+  useEffect(() => { const s = createSocket(); setSocket(s); window.__bingoSocket = s; s.on("error:message", e => setMessage(e.message)); s.on("room:update", e => setRoom(e.room)); s.on("room:started", e => { setRoom(e.room); setGame(e.game); s.emit("game:join", { gameId: e.game.gameId }) }); s.on("game:state", e => {
+      setGame(e.game);
+      if (e.game.status === "PLAYING" || e.game.status === "BOARD_SETUP") {
+        const player = e.game.players.find(p => p.userId === user._id);
+        const serverBoard = player?.board || null;
+        setBoard(Array.isArray(serverBoard) ? serverBoard.map(row => row.map(cell =>
+          cell && typeof cell === "object" && "value" in cell ? String(cell.value) : cell
+        )) : null);
+      }
+    }); s.on("game:move", e => setGame(e.game)); return () => s.disconnect() }, [user._id]);
   const create = async () => { try { const d = await api("/rooms", { method: "POST", body: JSON.stringify({ roomName, password, maxPlayers: Number(maxPlayers) }) }); setRoom(d.room); socket?.emit("room:join", { roomId: d.room.roomId }); setMessage("Room created. Share the room ID with friends.") } catch (e) { setMessage(e.message) } };
   const join = async () => { try { const d = await api("/rooms/join", { method: "POST", body: JSON.stringify({ roomId: joinId, password: joinPassword }) }); setRoom(d.room); socket?.emit("room:join", { roomId: d.room.roomId }); setMessage("Joined room.") } catch (e) { setMessage(e.message) } };
   const toggleReady = () => socket?.emit("room:ready", { roomId: room.roomId, ready: !room.players.find(p => p.userId === user._id)?.ready });
@@ -36,12 +45,129 @@ function Lobby({ user, room, toggleReady, start, onLogout, message }) {
   return <div className="dashboard"><header className="topbar"><div className="brand"><span>B</span><strong>BINGO</strong></div><button className="ghost" onClick={onLogout}>Logout</button></header><main className="lobby"><div className="room-head"><div><p className="eyebrow">PRIVATE ROOM</p><h1>{room.roomName}</h1><div className="room-id">ROOM <b>{room.roomId}</b></div></div></div>{message && <div className="notice">{message}</div>}<div className="player-grid">{room.players.map(p => <motion.div className={`player-card ${p.ready ? "ready" : ""}`} key={p.userId} layout><div className="avatar">{p.username.slice(0, 1).toUpperCase()}</div><div><b>{p.username}</b><small>{p.userId === room.hostId ? "HOST" : "PLAYER"}</small></div><span className="ready-pill">{p.ready ? "READY" : "WAITING"}</span></motion.div>)}</div><div className="lobby-actions"><button className={me?.ready ? "secondary" : "primary"} onClick={toggleReady}>{me?.ready ? "Not ready" : "I'm ready"}</button>{room.hostId === user._id && <button className="primary" disabled={room.players.length < 2 || !room.players.every(p => p.ready)} onClick={start}>Start game</button>}</div></main></div>
 }
 
-function Game({ user, room, game, board, setBoard, submitBoard, onLogout }) {
-  const size = game.boardSize; const my = game.players.find(p => p.userId === user._id); const isSetup = game.status === "BOARD_SETUP"; const isMyTurn = game.currentTurn === user._id; const localBoard = useMemo(() => board?.length === size ? board : Array.from({ length: size }, () => Array(size).fill("")), [board, size]); const [activeCell, setActiveCell] = useState(0);
-  const changeCell = (r, c, val) => { if (!isSetup) return; const clean = String(val).replace(/\D/g, "").slice(0, 5); const next = localBoard.map(row => [...row]); next[r][c] = clean; setBoard(next) };
-  const onKey = (e, index) => { let n = null; if (e.key === "Enter") n = Math.min(size * size - 1, index + 1); else if (e.key === "ArrowRight" || e.key === "ArrowDown") n = Math.min(size * size - 1, index + 1); else if (e.key === "ArrowLeft" || e.key === "ArrowUp") n = Math.max(0, index - 1); else if (e.key === "Backspace" && !localBoard[Math.floor(index / size)][index % size]) n = Math.max(0, index - 1); if (n !== null) { e.preventDefault(); setActiveCell(n); document.querySelector(`[data-cell="${n}"]`)?.focus() } };
-  const call = (n) => { if (isMyTurn && game.status === "PLAYING") window.__bingoSocket?.emit("game:numberCall", { gameId: game.gameId, number: n }) };
-  return <div className="game-page"><header className="topbar"><div className="brand"><span>B</span><strong>BINGO</strong></div><div className={`turn ${isMyTurn && !isSetup ? "my" : ""}`}>{isSetup ? "ENTER YOUR BOARD" : isMyTurn ? "YOUR TURN" : "WAITING FOR CALL"}</div><button className="ghost" onClick={onLogout}>Logout</button></header><main className="game-layout"><section className="board-panel"><div className="game-title"><div><p className="eyebrow">{room.roomId} · {game.playerCount} PLAYERS</p><h2>{game.status === "FINISHED" ? "GAME OVER" : `BINGO ${size}×${size}`}</h2></div></div><p className="muted">{isSetup ? "Enter your numbers. Press Enter to move to the next box." : "Click a number directly on your board to call it. Called numbers are marked for everyone."}</p><div className={`bingo-board ${isSetup ? "editing" : ""}`} style={{ "--size": size }}>{localBoard.map((row, r) => row.map((value, c) => { const idx = r * size + c; const marked = my?.board?.[r]?.[c]?.marked; const invalid = isSetup && value !== "" && (Number(value) < 1 || Number(value) > size * size); return <input key={idx} data-cell={idx} className={`${marked ? "marked" : ""} ${invalid ? "invalid-number" : ""}`} value={value ?? ""} onFocus={() => setActiveCell(idx)} onKeyDown={e => { if (!isSetup && game.status === "PLAYING" && isMyTurn) { e.preventDefault(); const n = Number(value); if (Number.isInteger(n) && n >= 1 && n <= size * size && !game.calledNumbers.includes(n)) call(n); return } onKey(e, idx) }} onClick={() => { if (!isSetup && game.status === "PLAYING" && isMyTurn) { const n = Number(value); if (Number.isInteger(n) && n >= 1 && n <= size * size && !game.calledNumbers.includes(n)) call(n) } }} onChange={e => changeCell(r, c, e.target.value)} disabled={!isSetup} aria-label={`row ${r + 1} column ${c + 1}`} />; }))}</div>{isSetup ? <button className="primary wide ready-submit" onClick={submitBoard}>✓ READY — SUBMIT MY BOARD</button> : <div className="inline-call-hint">{game.status === "PLAYING" ? (isMyTurn ? "YOUR TURN — click a number on your board to call it." : "WAITING — opponent calls will be marked on your board.") : "Match finished."}</div>}</section><aside className="side-panel"><h3>Players</h3>{game.players.map(p => <div className={`game-player ${p.userId === game.currentTurn ? "active" : ""}`} key={p.userId}><div className="avatar small">{p.username.slice(0, 1).toUpperCase()}</div><div className="gp-name"><b>{p.username}{p.userId === user._id ? " (You)" : ""}</b><span>{p.status}</span></div><div className="gp-score">{p.completedLines}<small>lines</small></div></div>)}<div className="called"><h3>Called numbers</h3><div className="called-list">{game.calledNumbers.length ? game.calledNumbers.map(n => <span key={n}>{n}</span>) : <small className="muted">No numbers called yet.</small>}</div></div></aside></main></div>
+function Game({user,room,game,board,setBoard,submitBoard,onLogout}) {
+  const size=game.boardSize;
+  const maxNumber=size*size;
+  const my=game.players.find(p=>p.userId===user._id);
+  const isSetup=game.status==="BOARD_SETUP";
+  const isMyTurn=game.currentTurn===user._id;
+  const localBoard=useMemo(()=>board?.length===size?board:Array.from({length:size},()=>Array(size).fill("")),[board,size]);
+  const [activeCell,setActiveCell]=useState(0);
+
+  const changeCell=(r,c,val)=>{
+    if(!isSetup)return;
+    const clean=String(val).replace(/\D/g,"").slice(0,2);
+    const next=localBoard.map(row=>[...row]);
+    next[r][c]=clean;
+    setBoard(next);
+  };
+
+  const focusCell=(index)=>{
+    const n=Math.max(0,Math.min(size*size-1,index));
+    setActiveCell(n);
+    requestAnimationFrame(()=>document.querySelector(`[data-cell="${n}"]`)?.focus());
+  };
+
+  const onKey=(e,index)=>{
+    if(e.key==="Enter"){
+      e.preventDefault();
+      focusCell(index+1);
+      return;
+    }
+    if(e.key==="ArrowRight"||e.key==="ArrowDown"){
+      e.preventDefault();
+      focusCell(index+1);
+      return;
+    }
+    if(e.key==="ArrowLeft"||e.key==="ArrowUp"){
+      e.preventDefault();
+      focusCell(index-1);
+      return;
+    }
+    if(e.key==="Backspace"&&!localBoard[Math.floor(index/size)][index%size]){
+      e.preventDefault();
+      focusCell(index-1);
+    }
+  };
+
+  const call=(n)=>{
+    if(!isMyTurn||game.status!=="PLAYING")return;
+    const number=Number(n);
+    if(!Number.isInteger(number)||number<1||number>maxNumber||game.calledNumbers.includes(number))return;
+    window.__bingoSocket?.emit("game:numberCall",{gameId:game.gameId,number});
+  };
+
+  return <div className="game-page">
+    <header className="topbar">
+      <div className="brand"><span>B</span><strong>BINGO</strong></div>
+      <div className={`turn ${isMyTurn&&!isSetup?"my":""}`}>{isSetup?"ENTER YOUR BOARD":isMyTurn?"YOUR TURN":"WAITING FOR CALL"}</div>
+      <button className="ghost" onClick={onLogout}>Logout</button>
+    </header>
+    <main className="game-layout">
+      <section className="board-panel">
+        <div className="game-title">
+          <div><p className="eyebrow">{room.roomId} · {game.playerCount} PLAYERS</p><h2>{game.status==="FINISHED"?"GAME OVER":`BINGO ${size}×${size}`}</h2></div>
+          <div className="progress"><b>{my?.completedLines||0}/{game.requiredLines}</b><span>LINES</span></div>
+        </div>
+        <p className="muted">
+          {isSetup
+            ? `Enter numbers from 1 to ${maxNumber}. Press Enter to move to the next box.`
+            : isMyTurn
+              ? "YOUR TURN — click any number on your main board to call it."
+              : "WAITING — opponent's called number will automatically turn green on your board."}
+        </p>
+
+        <div className={`bingo-board ${isSetup?"editing":"play-board"}`} style={{"--size":size}}>
+          {localBoard.map((row,r)=>row.map((value,c)=>{
+            const idx=r*size+c;
+            const number=Number(value);
+            const marked=Boolean(my?.board?.[r]?.[c]?.marked);
+            const invalid=isSetup && value!=="" && (!Number.isInteger(number)||number<1||number>maxNumber);
+            if(!isSetup){
+              return <button
+                key={idx}
+                type="button"
+                data-cell={idx}
+                className={`bingo-cell play-cell ${marked?"marked":""} ${game.calledNumbers.includes(number)?"called-cell":""}`}
+                onClick={()=>call(number)}
+                onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();call(number)}}}
+                disabled={!isMyTurn||!Number.isInteger(number)||number<1||number>maxNumber||game.calledNumbers.includes(number)}
+                aria-label={`Call number ${value}`}
+              >
+                <span>{value}</span>
+                {marked&&<i className="cell-check">✓</i>}
+              </button>;
+            }
+            return <input
+              key={idx}
+              data-cell={idx}
+              className={`bingo-cell ${invalid?"invalid-number":""}`}
+              value={value??""}
+              inputMode="numeric"
+              maxLength={2}
+              onFocus={()=>setActiveCell(idx)}
+              onKeyDown={e=>onKey(e,idx)}
+              onChange={e=>changeCell(r,c,e.target.value)}
+              aria-label={`row ${r+1} column ${c+1}`}
+            />;
+          }))}
+        </div>
+
+        {isSetup&&<button className="primary wide ready-submit" onClick={submitBoard}>✓ READY — SUBMIT MY BOARD</button>}
+      </section>
+
+      <aside className="side-panel">
+        <h3>Players</h3>
+        {game.players.map(p=><div className={`game-player ${p.userId===game.currentTurn?"active":""}`} key={p.userId}>
+          <div className="avatar small">{p.username.slice(0,1).toUpperCase()}</div>
+          <div className="gp-name"><b>{p.username}{p.userId===user._id?" (You)":""}</b><span>{p.status}</span></div>
+          <div className="gp-score">{p.completedLines}<small>lines</small></div>
+        </div>)}
+        <div className="called"><h3>Called numbers</h3><div className="called-list">{game.calledNumbers.length?game.calledNumbers.map(n=><span key={n}>{n}</span>):<small className="muted">No numbers called yet.</small>}</div></div>
+        {game.status==="FINISHED"&&<div className="result-card"><h3>Final result</h3>{[...game.players].sort((a,b)=>(a.rank||99)-(b.rank||99)).map(p=><div className="result-row" key={p.userId}><span>{p.rank?`#${p.rank}`:p.status}</span><b>{p.username}</b><strong>{p.points} pts</strong></div>)}</div>}
+      </aside>
+    </main>
+  </div>;
 }
 
 export default function App() { const [user, setUser] = useState(null); useEffect(() => { if (localStorage.getItem("bingo_token")) api("/auth/me").then(d => setUser(d.user)).catch(() => localStorage.removeItem("bingo_token")) }, []); const logout = () => { localStorage.removeItem("bingo_token"); setUser(null) }; return user ? <Dashboard user={user} onLogout={logout} /> : <Auth onLogin={setUser} /> }

@@ -49,9 +49,10 @@ export function callNumber(game, userId, number) {
   game.calledNumbers.push(number);
   game.turnNumber += 1;
 
-  // A called number marks opponents only.
+  // A called number marks the same number on EVERY board, including the caller.
+  // This keeps the main board synchronized for both players.
   for (const p of game.players) {
-    if (p.userId === userId || p.status !== "PLAYING") continue;
+    if (p.status !== "PLAYING") continue;
     for (const row of p.board) {
       for (const cell of row) {
         if (cell.value === number) cell.marked = true;

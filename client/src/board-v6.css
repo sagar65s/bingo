@@ -1,0 +1,17 @@
+/* BINGO v6: visible board cells, click-to-call, red validation, green mark animation */
+.bingo-board{position:relative}
+.bingo-cell{box-sizing:border-box;min-width:0;width:100%;height:100%;font:inherit;font-weight:900;text-align:center}
+.bingo-board.editing .bingo-cell{background:#0d1b2e;color:#f8fafc;border:1px solid rgba(94,234,212,.16);border-radius:10px;outline:none;font-size:clamp(18px,3vw,28px)}
+.bingo-board.editing .bingo-cell:focus{border-color:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.13),0 8px 20px rgba(0,0,0,.2);transform:translateY(-2px)}
+.bingo-board.editing .bingo-cell.invalid-number{color:#f87171!important;border-color:#ef4444!important;background:rgba(127,29,29,.28)!important;box-shadow:0 0 0 3px rgba(239,68,68,.12),0 0 18px rgba(239,68,68,.12)}
+.bingo-board.play-board{gap:6px}
+.bingo-board .play-cell{position:relative;border:1px solid rgba(94,234,212,.16);border-radius:10px;background:#0d1b2e;color:#f8fafc;cursor:pointer;font-size:clamp(18px,3vw,28px);transition:transform .18s ease,background .18s ease,border-color .18s ease,box-shadow .18s ease}
+.bingo-board .play-cell:hover:not(:disabled){transform:translateY(-3px) scale(1.035);border-color:#34d399;background:#10273b;box-shadow:0 10px 25px rgba(0,0,0,.25)}
+.bingo-board .play-cell:disabled{cursor:default;opacity:1}
+.bingo-board .play-cell.marked{background:linear-gradient(135deg,#15803d,#22c55e)!important;border-color:#86efac!important;color:#fff;box-shadow:0 0 0 3px rgba(34,197,94,.18),0 0 26px rgba(34,197,94,.34);animation:bingoGreenPop .35s cubic-bezier(.2,.9,.2,1)}
+.cell-check{position:absolute;right:5px;top:3px;font-style:normal;font-size:11px;line-height:1;color:#dcfce7}
+.bingo-board .play-cell.called-cell{border-color:#34d399}
+.ready-submit{margin-top:18px}
+@keyframes bingoGreenPop{0%{transform:scale(.78);filter:brightness(1.35)}65%{transform:scale(1.08);filter:brightness(1.12)}100%{transform:scale(1);filter:brightness(1)}}
+@media(max-width:650px){.bingo-board .play-cell,.bingo-board.editing .bingo-cell{border-radius:8px}.bingo-board.play-board{gap:4px}}
+@media(prefers-reduced-motion:reduce){.bingo-board .play-cell.marked{animation:none}.bingo-board .play-cell:hover:not(:disabled){transform:none}}
