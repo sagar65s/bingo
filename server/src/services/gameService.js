@@ -81,10 +81,17 @@ export function callNumber(game, userId, number) {
   let resultEvent = null;
 
   if (winnersThisMove.length > 1) {
-    for (const p of winnersThisMove) {
-      p.status = "DRAW";
-      p.points = GAME_CONFIG.DRAW_POINTS;
-      p.rank = null;
+    const drawIds = new Set(winnersThisMove.map(p => p.userId));
+    for (const p of game.players) {
+      if (drawIds.has(p.userId)) {
+        p.status = "DRAW";
+        p.points = GAME_CONFIG.DRAW_POINTS;
+        p.rank = null;
+      } else {
+        p.status = "OUT";
+        p.points = GAME_CONFIG.OUT_POINTS;
+        p.rank = null;
+      }
     }
     game.status = "FINISHED";
     resultEvent = {type:"DRAW", players:winnersThisMove.map(p=>p.username)};
