@@ -22,7 +22,8 @@ export async function createRoom(req,res) {
 
 export async function joinRoom(req,res) {
   const {roomId,password=""} = req.body || {};
-  const room = store.rooms.get(String(roomId || "").toUpperCase());
+  const cleanRoomId = String(roomId || "").replace(/\D/g, "").slice(0, 6);
+  const room = store.rooms.get(cleanRoomId);
   if (!room) return res.status(404).json({message:"Room not found"});
   if (room.players.length >= room.maxPlayers) return res.status(409).json({message:"Room is full"});
   if (room.status !== "WAITING") return res.status(409).json({message:"Game already started"});
