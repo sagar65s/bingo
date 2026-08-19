@@ -2,85 +2,25 @@ import { verifyToken } from "../utils/auth.js";
 import { store } from "../store/memoryStore.js";
 import { publicRoom, startRoom } from "../controllers/roomController.js";
 import { submitBoard, callNumber } from "../services/gameService.js";
-
+import { id } from "../utils/ids.js";
+function onlineList(exceptId = null) { return [...store.users.values()].filter(u => String(u._id) !== String(exceptId) && store.onlineSockets.has(String(u._id))).map(u => ({ userId: String(u._id), uid: u.uid, username: u.username, avatar: u.avatar || null, online: true })) }
+function emitPresence(io) { io.emit("presence:list", { players: onlineList() }) }
+function socketsFor(userId) { return [...(store.onlineSockets.get(String(userId)) || [])] }
 export function configureSockets(io) {
-  io.use((socket,next)=>{
-    try {
-      const token = socket.handshake.auth?.token;
-      if (!token) return next(new Error("Authentication required"));
-      socket.user = verifyToken(token);
-      next();
-    } catch {
-      next(new Error("Invalid socket authentication"));
-    }
-  });
-
-  io.on("connection", socket=>{
-    socket.emit("server:ready",{message:"BINGO real-time server connected"});
-
-    socket.on("room:join", ({roomId})=>{
-      const room = store.rooms.get(String(roomId||"").toUpperCase());
-      if (!room) return socket.emit("error:message",{message:"Room not found"});
-      if (!room.players.some(p=>p.userId===socket.user.sub)) return socket.emit("error:message",{message:"You are not a room member"});
-      socket.join(room.roomId);
-      io.to(room.roomId).emit("room:update",{room:publicRoom(room), gameId:room.gameId||null});
-    });
-
-    socket.on("room:ready", ({roomId,ready})=>{
-      const room=store.rooms.get(String(roomId||"").toUpperCase());
-      if(!room) return;
-      const p=room.players.find(p=>p.userId===socket.user.sub);
-      if(!p) return;
-      p.ready=Boolean(ready);
-      io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null});
-    });
-
-    socket.on("room:start", ({roomId})=>{
-      try {
-        const room=store.rooms.get(String(roomId||"").toUpperCase());
-        if(!room) throw new Error("Room not found");
-        if(room.hostId!==socket.user.sub) throw new Error("Only the host can start");
-        const game=startRoom(room);
-        io.to(room.roomId).emit("room:started",{room:publicRoom(room),game});
-      } catch(e) { socket.emit("error:message",{message:e.message}); }
-    });
-
-    socket.on("game:join", ({gameId})=>{
-      const game=store.games.get(gameId);
-      if(!game || !game.players.some(p=>p.userId===socket.user.sub)) return;
-      socket.join(game.roomId);
-      socket.emit("game:state",{game});
-    });
-
-    socket.on("game:boardSubmit", ({gameId,board})=>{
-      try {
-        const game=store.games.get(gameId);
-        if(!game) throw new Error("Game not found");
-        submitBoard(game,socket.user.sub,board);
-        io.to(game.roomId).emit("game:state",{game});
-      } catch(e){ socket.emit("error:message",{message:e.message}); }
-    });
-
-    socket.on("game:numberCall", ({gameId,number})=>{
-      try {
-        const game=store.games.get(gameId);
-        if(!game) throw new Error("Game not found");
-        const result=callNumber(game,socket.user.sub,Number(number));
-        io.to(game.roomId).emit("game:move",{
-          game:result.game,
-          actor:result.actor,
-          number:result.number,
-          resultEvent:result.resultEvent
-        });
-      } catch(e){ socket.emit("error:message",{message:e.message}); }
-    });
-
-    socket.on("game:reconnect", ({gameId})=>{
-      const game=store.games.get(gameId);
-      if(game && game.players.some(p=>p.userId===socket.user.sub)) {
-        socket.join(game.roomId);
-        socket.emit("game:state",{game});
-      }
-    });
+  io.use((socket, next) => { try { const token = socket.handshake.auth?.token; if (!token) return next(new Error("Authentication required")); socket.user = verifyToken(token); next() } catch { next(new Error("Invalid socket authentication")) } });
+  io.on("connection", socket => {
+    const uid = String(socket.user.sub); if (!store.onlineSockets.has(uid)) store.onlineSockets.set(uid, new Set()); store.onlineSockets.get(uid).add(socket.id); socket.emit("server:ready", { message: "BINGO real-time server connected" }); socket.emit("presence:list", { players: onlineList(uid) }); emitPresence(io);
+    socket.on("room:join", ({ roomId }) => { const room = store.rooms.get(String(roomId || "").toUpperCase()); if (!room) return socket.emit("error:message", { message: "Room not found" }); if (!room.players.some(p => p.userId === uid)) return socket.emit("error:message", { message: "You are not a room member" }); socket.join(room.roomId); io.to(room.roomId).emit("room:update", { room: publicRoom(room), gameId: room.gameId || null }) });
+    socket.on("room:leave", ({ roomId }) => { const room = store.rooms.get(String(roomId || "").toUpperCase()); if (!room) return; room.players = room.players.filter(p => p.userId !== uid); if (room.hostId === uid && room.players.length) room.hostId = room.players[0].userId; if (room.players.length === 0) store.rooms.delete(room.roomId); else io.to(room.roomId).emit("room:update", { room: publicRoom(room), gameId: room.gameId || null }); socket.leave(room.roomId) });
+    socket.on("room:ready", ({ roomId, ready }) => { const room = store.rooms.get(String(roomId || "").toUpperCase()); if (!room) return; const p = room.players.find(p => p.userId === uid); if (!p) return; p.ready = Boolean(ready); io.to(room.roomId).emit("room:update", { room: publicRoom(room), gameId: room.gameId || null }) });
+    socket.on("room:start", ({ roomId }) => { try { const room = store.rooms.get(String(roomId || "").toUpperCase()); if (!room) throw new Error("Room not found"); if (room.hostId !== uid) throw new Error("Only the host can start"); const game = startRoom(room); io.to(room.roomId).emit("room:started", { room: publicRoom(room), game }) } catch (e) { socket.emit("error:message", { message: e.message }) } });
+    socket.on("room:invite", ({ roomId, targetUserId }) => { try { const room = store.rooms.get(String(roomId || "").toUpperCase()); if (!room) throw new Error("Room not found"); if (room.status !== "WAITING") throw new Error("Game already started"); if (!room.players.some(p => p.userId === uid)) throw new Error("You are not a room member"); if (room.players.length >= room.maxPlayers) throw new Error("Room is full"); const targetId = String(targetUserId); const target = store.users.get(targetId); if (!target || !store.onlineSockets.has(targetId)) throw new Error("Player is offline"); if (room.players.some(p => p.userId === targetId)) throw new Error("Player is already in the room"); const inviteId = id(); store.roomInvites.set(inviteId, { inviteId, roomId: room.roomId, fromUserId: uid, toUserId: targetId, expiresAt: Date.now() + 120000 }); const inviter = store.users.get(uid); for (const sid of socketsFor(targetId)) io.to(sid).emit("room:invite", { inviteId, roomId: room.roomId, roomName: room.roomName, inviter: { userId: uid, uid: inviter?.uid, username: inviter?.username } }); socket.emit("room:invite:response", { message: `Invitation sent to ${target.username}.` }) } catch (e) { socket.emit("error:message", { message: e.message }) } });
+    socket.on("room:invite:accept", ({ inviteId }) => { try { const inv = store.roomInvites.get(String(inviteId)); if (!inv || inv.toUserId !== uid) throw new Error("Invitation is no longer valid"); if (inv.expiresAt < Date.now()) { store.roomInvites.delete(inviteId); throw new Error("Invitation expired") }; const room = store.rooms.get(inv.roomId); if (!room) throw new Error("Room no longer exists"); if (room.status !== "WAITING") throw new Error("Game already started"); if (room.players.length >= room.maxPlayers) throw new Error("Room is full"); const user = store.users.get(uid); if (!room.players.some(p => p.userId === uid)) room.players.push({ userId: uid, uid: user.uid, username: user.username, ready: false }); store.roomInvites.delete(inviteId); socket.join(room.roomId); io.to(room.roomId).emit("room:update", { room: publicRoom(room), gameId: room.gameId || null }); socket.emit("room:joined", { inviteId, room: publicRoom(room) }); for (const sid of socketsFor(inv.fromUserId)) io.to(sid).emit("room:invite:response", { message: `${user.username} accepted your room invitation.` }) } catch (e) { socket.emit("error:message", { message: e.message }) } });
+    socket.on("room:invite:reject", ({ inviteId }) => { const inv = store.roomInvites.get(String(inviteId)); if (!inv || inv.toUserId !== uid) return; store.roomInvites.delete(inviteId); const user = store.users.get(uid); for (const sid of socketsFor(inv.fromUserId)) io.to(sid).emit("room:invite:response", { message: `${user?.username || "Player"} rejected your room invitation.` }) });
+    socket.on("game:join", ({ gameId }) => { const game = store.games.get(gameId); if (!game || !game.players.some(p => p.userId === uid)) return; socket.join(game.roomId); socket.emit("game:state", { game }) });
+    socket.on("game:boardSubmit", ({ gameId, board }) => { try { const game = store.games.get(gameId); if (!game) throw new Error("Game not found"); submitBoard(game, uid, board); io.to(game.roomId).emit("game:state", { game }) } catch (e) { socket.emit("error:message", { message: e.message }) } });
+    socket.on("game:numberCall", ({ gameId, number }) => { try { const game = store.games.get(gameId); if (!game) throw new Error("Game not found"); const result = callNumber(game, uid, Number(number)); io.to(game.roomId).emit("game:move", { game: result.game, actor: result.actor, number: result.number, resultEvent: result.resultEvent }) } catch (e) { socket.emit("error:message", { message: e.message }) } });
+    socket.on("game:reconnect", ({ gameId }) => { const game = store.games.get(gameId); if (game && game.players.some(p => p.userId === uid)) { socket.join(game.roomId); socket.emit("game:state", { game }) } });
+    socket.on("disconnect", () => { const set = store.onlineSockets.get(uid); if (set) { set.delete(socket.id); if (set.size === 0) store.onlineSockets.delete(uid) } emitPresence(io) });
   });
 }

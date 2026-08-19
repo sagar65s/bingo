@@ -7,6 +7,7 @@ import { connectDatabase } from "./config/database.js";
 import authRoutes from "./routes/authRoutes.js";
 import roomRoutes from "./routes/roomRoutes.js";
 import historyRoutes from "./routes/historyRoutes.js";
+import playerRoutes from "./routes/playerRoutes.js";
 import { configureSockets } from "./sockets/socketServer.js";
 
 const app = express();
@@ -22,6 +23,7 @@ app.get("/api/health", (_req,res)=>res.json({
 app.use("/api/auth", authRoutes);
 app.use("/api/rooms", roomRoutes);
 app.use("/api/history", historyRoutes);
+app.use("/api/players", playerRoutes);
 
 app.use((err,_req,res,_next)=>{
   console.error(err);
