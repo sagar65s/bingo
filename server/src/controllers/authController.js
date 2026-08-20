@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import User from "../models/User.js";
 import { store } from "../store/memoryStore.js";
 import { hashPassword, comparePassword } from "../utils/password.js";
@@ -8,22 +9,34 @@ const normalizeEmail = value => String(value || "").trim().toLowerCase();
 const normalizeUsername = value => String(value || "").trim();
 
 const clean = u => ({
-  _id: u._id?.toString?.() || u._id,
-  uid: u.uid,
-  username: u.username,
-  email: normalizeEmail(u.email),
-  avatar: u.avatar || null
+  _id: u?._id?.toString?.() || u?._id,
+  uid: u?.uid,
+  username: u?.username,
+  email: normalizeEmail(u?.email),
+  avatar: u?.avatar || null
 });
 
-// Keep the in-memory store warm even when the user was loaded from MongoDB.
+const mongoReady = () =>
+  Boolean(process.env.MONGODB_URI) && mongoose.connection.readyState === 1;
+
 function cacheUser(user) {
   const plain = user?.toObject ? user.toObject() : user;
   const key = plain?._id?.toString?.() || plain?._id;
   if (!key) return plain;
 
   store.users.set(key, plain);
-  if (plain.username) store.usersByUsername.set(String(plain.username).toLowerCase(), key);
-  if (plain.email) store.usersByEmail.set(normalizeEmail(plain.email), key);
+
+  if (plain.username) {
+    store.usersByUsername.set(
+      String(plain.username).trim().toLowerCase(),
+      key
+    );
+  }
+
+  if (plain.email) {
+    store.usersByEmail.set(normalizeEmail(plain.email), key);
+  }
+
   return plain;
 }
 
@@ -38,34 +51,74 @@ export async function register(req, res) {
     });
   }
 
-  // Check both memory and MongoDB. This prevents duplicate accounts even
-  // after the Node process has restarted.
   const memoryExisting = [...store.users.values()].find(
-    u => String(u.username || "").toLowerCase() === username.toLowerCase() ||
-         normalizeEmail(u.email) === email
+    u =>
+      String(u.username || "").trim().toLowerCase() === username.toLowerCase() ||
+      normalizeEmail(u.email) === email
   );
+
   if (memoryExisting) {
-    return res.status(409).json({ message: "Username or email already exists" });
+    return res.status(409).json({
+      message: "Username or email already exists"
+    });
   }
 
-  if (process.env.MONGODB_URI) {
+  /*
+   * IMPORTANT FIX:
+   * Do NOT pass our UUID as MongoDB's _id.
+   * The User schema uses MongoDB's default ObjectId.
+   * The previous code generated crypto.randomUUID() for _id,
+   * which caused Mongoose CastError during User.create().
+   */
+  if (mongoReady()) {
     try {
       const dbExisting = await User.findOne({
         $or: [
-          { username: username },
-          { email: email }
+          { username },
+          { email }
         ]
       }).lean();
+
       if (dbExisting) {
         cacheUser(dbExisting);
-        return res.status(409).json({ message: "Username or email already exists" });
+        return res.status(409).json({
+          message: "Username or email already exists"
+        });
       }
+
+      const created = await User.create({
+        uid: uid(),
+        username,
+        email,
+        passwordHash: await hashPassword(password),
+        avatar: null
+      });
+
+      const plain = cacheUser(created);
+
+      return res.status(201).json({
+        user: clean(plain),
+        token: signToken(plain)
+      });
     } catch (error) {
-      console.error("Registration database lookup failed:", error.message);
-      return res.status(503).json({ message: "Database is temporarily unavailable. Please try again." });
+      if (error?.code === 11000) {
+        return res.status(409).json({
+          message: "Username or email already exists"
+        });
+      }
+
+      console.error("Registration database error:", error);
+
+      return res.status(500).json({
+        message: "Unable to create account. Please check the server database connection."
+      });
     }
   }
 
+  /*
+   * Development / in-memory mode.
+   * Here a UUID _id is fine because MongoDB is not being used.
+   */
   const user = {
     _id: id(),
     uid: uid(),
@@ -75,26 +128,12 @@ export async function register(req, res) {
     avatar: null
   };
 
-  if (process.env.MONGODB_URI) {
-    try {
-      const created = await User.create(user);
-      cacheUser(created);
-      return res.status(201).json({ user: clean(created), token: signToken(created) });
-    } catch (error) {
-      // Mongoose unique indexes are the final protection against races.
-      if (error?.code === 11000) {
-        return res.status(409).json({ message: "Username or email already exists" });
-      }
-      console.error("Registration database save failed:", error.message);
-      return res.status(500).json({ message: "Unable to create account. Please try again." });
-    }
-  }
+  cacheUser(user);
 
-  // Development / no-Mongo mode.
-  store.users.set(user._id, user);
-  store.usersByUsername.set(username.toLowerCase(), user._id);
-  store.usersByEmail.set(email, user._id);
-  return res.status(201).json({ user: clean(user), token: signToken(user) });
+  return res.status(201).json({
+    user: clean(user),
+    token: signToken(user)
+  });
 }
 
 export async function login(req, res) {
@@ -102,51 +141,79 @@ export async function login(req, res) {
   const password = String(req.body?.password || "");
 
   if (!email || !password) {
-    return res.status(401).json({ message: "Invalid email or password" });
+    return res.status(401).json({
+      message: "Invalid email or password"
+    });
   }
 
-  // First check memory for fast login.
-  let user = [...store.users.values()].find(u => normalizeEmail(u.email) === email);
+  // Fast path: user may already be cached in memory.
+  let user = [...store.users.values()].find(
+    u => normalizeEmail(u.email) === email
+  );
 
-  // IMPORTANT: memoryStore is cleared whenever the server restarts. If the
-  // account exists in MongoDB, load it from the database instead of treating
-  // it as a non-existent user.
-  if (!user && process.env.MONGODB_URI) {
+  // Persistent path: load existing account from MongoDB.
+  if (!user && mongoReady()) {
     try {
       user = await User.findOne({ email }).lean();
-      if (user) cacheUser(user);
+
+      if (user) {
+        cacheUser(user);
+      }
     } catch (error) {
-      console.error("Login database lookup failed:", error.message);
-      return res.status(503).json({ message: "Database is temporarily unavailable. Please try again." });
+      console.error("Login database error:", error);
+
+      return res.status(503).json({
+        message: "Database is temporarily unavailable. Please try again."
+      });
     }
   }
 
   if (!user?.passwordHash) {
-    return res.status(401).json({ message: "Invalid email or password" });
+    return res.status(401).json({
+      message: "Invalid email or password"
+    });
   }
 
   const valid = await comparePassword(password, user.passwordHash);
+
   if (!valid) {
-    return res.status(401).json({ message: "Invalid email or password" });
+    return res.status(401).json({
+      message: "Invalid email or password"
+    });
   }
 
-  return res.json({ user: clean(user), token: signToken(user) });
+  return res.json({
+    user: clean(user),
+    token: signToken(user)
+  });
 }
 
 export async function me(req, res) {
-  let user = store.users.get(req.auth.sub);
+  let user = store.users.get(String(req.auth.sub));
 
-  // Same persistence fix for page refresh / returning users.
-  if (!user && process.env.MONGODB_URI) {
+  if (!user && mongoReady()) {
     try {
       user = await User.findById(req.auth.sub).lean();
-      if (user) cacheUser(user);
+
+      if (user) {
+        cacheUser(user);
+      }
     } catch (error) {
-      console.error("Auth /me database lookup failed:", error.message);
-      return res.status(503).json({ message: "Database is temporarily unavailable. Please try again." });
+      console.error("Auth /me database error:", error);
+
+      return res.status(503).json({
+        message: "Database is temporarily unavailable. Please try again."
+      });
     }
   }
 
-  if (!user) return res.status(404).json({ message: "User not found" });
-  return res.json({ user: clean(user) });
+  if (!user) {
+    return res.status(404).json({
+      message: "User not found"
+    });
+  }
+
+  return res.json({
+    user: clean(user)
+  });
 }
