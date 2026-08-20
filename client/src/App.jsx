@@ -30,10 +30,10 @@ function Dashboard({user,onLogout}) {
     let presenceTimer;
     const refreshOnline=()=>api("/players/online").then(d=>applyOnline(d.players)).catch(()=>{});
     refreshOnline();
-    presenceTimer=setInterval(refreshOnline,3000);
+    presenceTimer=setInterval(refreshOnline,30000);
     s.on("room:update",e=>setRoom(e.room));
     s.on("room:invite",invite=>setInvites(prev=>prev.some(x=>x.inviteId===invite.inviteId)?prev:[invite,...prev]));
-    s.on("room:invite:response",e=>{setMessage(e.message);setSentInvites([])});
+    s.on("room:invite:response",e=>{setMessage(e.message);if(e.inviteId){setSentInvites(prev=>prev.filter(x=>String(x)!==String(e.targetUserId||e.toUserId||"")))}else{setSentInvites([])}});
     s.on("room:joined",e=>{setInvites(prev=>prev.filter(x=>x.inviteId!==e.inviteId));setRoom(e.room);setMessage(`Joined ${e.room.roomName} from invitation.`)});
     s.on("room:started",e=>{setRoom(e.room);setGame(e.game);setBoard(null);s.emit("game:join",{gameId:e.game.gameId})});
     s.on("game:state",e=>{
