@@ -1,81 +1,1275 @@
 import { verifyToken } from "../utils/auth.js";
 import { store } from "../store/memoryStore.js";
-import { publicRoom,startRoom } from "../controllers/roomController.js";
-import { submitBoard,callNumber } from "../services/gameService.js";
+import {
+  publicRoom,
+  startRoom
+} from "../controllers/roomController.js";
+import {
+  submitBoard,
+  callNumber
+} from "../services/gameService.js";
 import { id } from "../utils/ids.js";
-<<<<<<< Updated upstream
-function onlineList(exceptId=null){return [...store.users.values()].filter(u=>String(u._id)!==String(exceptId)&&store.onlineSockets.has(String(u._id))).map(u=>({userId:String(u._id),uid:u.uid,username:u.username,avatar:u.avatar||null,online:true}))}
-function emitPresence(io){
-  const players=onlineList();
-  for(const client of io.sockets.sockets.values()){
-    const me=String(client.user?.sub||"");
-    client.emit("presence:list",{players:players.filter(p=>String(p.userId)!==me)});
+
+
+const normalizeRoomId = value =>
+  String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 6);
+
+
+function onlineList(exceptId = null) {
+  return [...store.users.values()]
+    .filter(user => {
+      const userId = String(user._id);
+
+      return (
+        userId !== String(exceptId) &&
+        store.onlineSockets.has(userId)
+      );
+    })
+    .map(user => ({
+      userId: String(user._id),
+      uid: user.uid,
+      username: user.username,
+      avatar: user.avatar || null,
+      online: true
+    }));
+}
+
+
+function emitPresence(io) {
+  for (const client of io.sockets.sockets.values()) {
+    const currentUserId = String(
+      client.user?.sub || ""
+    );
+
+    client.emit("presence:list", {
+      players: onlineList(currentUserId)
+    });
   }
 }
-function socketsFor(userId){return [...(store.onlineSockets.get(String(userId))||[])]}
-export function configureSockets(io){
- io.use((socket,next)=>{try{const token=socket.handshake.auth?.token;if(!token)return next(new Error("Authentication required"));socket.user=verifyToken(token);next()}catch{next(new Error("Invalid socket authentication"))}});
- io.on("connection",socket=>{
-  const uid=String(socket.user.sub);if(!store.onlineSockets.has(uid))store.onlineSockets.set(uid,new Set());store.onlineSockets.get(uid).add(socket.id);socket.emit("server:ready",{message:"BINGO real-time server connected"});socket.emit("presence:list",{players:onlineList(uid)});emitPresence(io);
-  socket.on("room:join",({roomId})=>{const room=store.rooms.get(String(roomId||"").replace(/\D/g,"").slice(0,6));if(!room)return socket.emit("error:message",{message:"Room not found"});if(!room.players.some(p=>p.userId===uid))return socket.emit("error:message",{message:"You are not a room member"});socket.join(room.roomId);io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null})});
-  socket.on("room:leave",({roomId})=>{const room=store.rooms.get(String(roomId||"").replace(/\D/g,"").slice(0,6));if(!room)return;room.players=room.players.filter(p=>p.userId!==uid);if(room.hostId===uid&&room.players.length)room.hostId=room.players[0].userId;if(room.players.length===0)store.rooms.delete(room.roomId);else io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null});socket.leave(room.roomId)});
-  socket.on("room:ready",({roomId,ready})=>{const room=store.rooms.get(String(roomId||"").replace(/\D/g,"").slice(0,6));if(!room)return;const p=room.players.find(p=>p.userId===uid);if(!p)return;p.ready=Boolean(ready);io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null})});
-  socket.on("room:start",({roomId})=>{try{const room=store.rooms.get(String(roomId||"").replace(/\D/g,"").slice(0,6));if(!room)throw new Error("Room not found");if(room.hostId!==uid)throw new Error("Only the host can start");const game=startRoom(room);io.to(room.roomId).emit("room:started",{room:publicRoom(room),game})}catch(e){socket.emit("error:message",{message:e.message})}});
-  socket.on("room:invite",({roomId,targetUserId})=>{try{const room=store.rooms.get(String(roomId||"").replace(/\D/g,"").slice(0,6));if(!room)throw new Error("Room not found");if(room.status!=="WAITING")throw new Error("Game already started");if(!room.players.some(p=>p.userId===uid))throw new Error("You are not a room member");if(room.players.length>=room.maxPlayers)throw new Error("Room is full");const targetId=String(targetUserId);const target=store.users.get(targetId);if(!target||!store.onlineSockets.has(targetId))throw new Error("Player is offline");if(room.players.some(p=>p.userId===targetId))throw new Error("Player is already in the room");const inviteId=id();store.roomInvites.set(inviteId,{inviteId,roomId:room.roomId,fromUserId:uid,toUserId:targetId,expiresAt:Date.now()+120000});const inviter=store.users.get(uid);for(const sid of socketsFor(targetId))io.to(sid).emit("room:invite",{inviteId,roomId:room.roomId,roomName:room.roomName,inviter:{userId:uid,uid:inviter?.uid,username:inviter?.username}});socket.emit("room:invite:response",{inviteId,targetUserId:targetId,message:`Invitation sent to ${target.username}.`})}catch(e){socket.emit("error:message",{message:e.message})}});
-  socket.on("room:invite:accept",({inviteId})=>{try{const inv=store.roomInvites.get(String(inviteId));if(!inv||inv.toUserId!==uid)throw new Error("Invitation is no longer valid");if(inv.expiresAt<Date.now()){store.roomInvites.delete(inviteId);throw new Error("Invitation expired")};const room=store.rooms.get(inv.roomId);if(!room)throw new Error("Room no longer exists");if(room.status!=="WAITING")throw new Error("Game already started");if(room.players.length>=room.maxPlayers)throw new Error("Room is full");const user=store.users.get(uid);if(!room.players.some(p=>p.userId===uid))room.players.push({userId:uid,uid:user.uid,username:user.username,ready:false});store.roomInvites.delete(inviteId);socket.join(room.roomId);io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null});socket.emit("room:joined",{inviteId,room:publicRoom(room)});for(const sid of socketsFor(inv.fromUserId))io.to(sid).emit("room:invite:response",{inviteId,targetUserId:uid,message:`${user.username} accepted your room invitation.`})}catch(e){socket.emit("error:message",{message:e.message})}});
-  socket.on("room:invite:reject",({inviteId})=>{const inv=store.roomInvites.get(String(inviteId));if(!inv||inv.toUserId!==uid)return;store.roomInvites.delete(inviteId);const user=store.users.get(uid);for(const sid of socketsFor(inv.fromUserId))io.to(sid).emit("room:invite:response",{inviteId:inv.inviteId,targetUserId:uid,message:`${user?.username||"Player"} rejected your room invitation.`})});
-  socket.on("game:join",({gameId})=>{const game=store.games.get(gameId);if(!game||!game.players.some(p=>p.userId===uid))return;socket.join(game.roomId);socket.emit("game:state",{game})});
-  socket.on("game:boardSubmit",({gameId,board})=>{try{const game=store.games.get(gameId);if(!game)throw new Error("Game not found");submitBoard(game,uid,board);io.to(game.roomId).emit("game:state",{game})}catch(e){socket.emit("error:message",{message:e.message})}});
-  socket.on("game:numberCall",({gameId,number})=>{try{const game=store.games.get(gameId);if(!game)throw new Error("Game not found");const result=callNumber(game,uid,Number(number));io.to(game.roomId).emit("game:move",{game:result.game,actor:result.actor,number:result.number,resultEvent:result.resultEvent})}catch(e){socket.emit("error:message",{message:e.message})}});
-  socket.on("game:reconnect",({gameId})=>{const game=store.games.get(gameId);if(game&&game.players.some(p=>p.userId===uid)){socket.join(game.roomId);socket.emit("game:state",{game})}});
-  socket.on("disconnect",()=>{const set=store.onlineSockets.get(uid);if(set){set.delete(socket.id);if(set.size===0)store.onlineSockets.delete(uid)}emitPresence(io)});
- });
-=======
 
-const normalizeRoomId=v=>String(v||"").replace(/\D/g,"").slice(0,6);
-function onlineList(exceptId=null){return [...store.users.values()].filter(u=>String(u._id)!==String(exceptId)&&store.onlineSockets.has(String(u._id))).map(u=>({userId:String(u._id),uid:u.uid,username:u.username,avatar:u.avatar||null,online:true}));}
-function emitPresence(io){for(const client of io.sockets.sockets.values()){const me=String(client.user?.sub||"");client.emit("presence:list",{players:onlineList(me)});}}
-function socketsFor(userId){return [...(store.onlineSockets.get(String(userId))||[])];}
-function emitRoom(io,room){io.to(room.roomId).emit("room:update",{room:publicRoom(room),gameId:room.gameId||null});}
 
-function publicGame(game,userId){
-  return {...game,players:game.players.map(p=>{
-    const isMe=String(p.userId)===String(userId);
-    return {...p,board:isMe?p.board:[]};
-  })};
+function socketsFor(userId) {
+  return [
+    ...(store.onlineSockets.get(String(userId)) || [])
+  ];
 }
 
-function finishToHistory(game){
-  const finalRanking=[...game.players].sort((a,b)=>(a.rank??999)-(b.rank??999)).map(p=>({userId:p.userId,uid:p.uid,username:p.username,rank:p.rank,status:p.status,points:p.points,completedLines:p.completedLines}));
-  store.histories.set(game.gameId,{gameId:game.gameId,roomId:game.roomId,playerCount:game.playerCount,startedAt:game.startedAt,endedAt:game.endedAt,winner:game.players.find(p=>p.rank===1)?.username||null,drawPlayers:game.players.filter(p=>p.status==="DRAW").map(p=>p.username),outPlayer:game.players.find(p=>p.status==="OUT")?.username||null,finalRanking});
-}
-export function configureSockets(io){
-  io.use((socket,next)=>{try{const token=socket.handshake.auth?.token;if(!token)return next(new Error("Authentication required"));socket.user=verifyToken(token);next();}catch{next(new Error("Invalid socket authentication"));}});
-  io.on("connection",socket=>{
-    const uid=String(socket.user.sub);
-    if(!store.onlineSockets.has(uid))store.onlineSockets.set(uid,new Set());store.onlineSockets.get(uid).add(socket.id);
-    socket.emit("server:ready",{message:"BINGO real-time server connected"});emitPresence(io);
 
-    socket.on("room:join",({roomId},ack)=>{const room=store.rooms.get(normalizeRoomId(roomId));if(!room){socket.emit("error:message",{message:"Room not found"});return ack?.({ok:false,message:"Room not found"});}if(!room.players.some(p=>p.userId===uid)){socket.emit("error:message",{message:"You are not a room member"});return ack?.({ok:false,message:"You are not a room member"});}socket.join(room.roomId);emitRoom(io,room);ack?.({ok:true,room:publicRoom(room)});});
-
-    socket.on("room:leave",({roomId})=>{const room=store.rooms.get(normalizeRoomId(roomId));if(!room)return;room.players=room.players.filter(p=>p.userId!==uid);room.rematchReady?.delete(uid);if(room.hostId===uid&&room.players.length)room.hostId=room.players[0].userId;if(room.players.length===0){store.rooms.delete(room.roomId);}else{room.status="WAITING";room.gameId=null;for(const p of room.players)p.ready=false;emitRoom(io,room);}socket.leave(room.roomId);});
-
-    socket.on("room:ready",({roomId,ready})=>{const room=store.rooms.get(normalizeRoomId(roomId));if(!room)return;const p=room.players.find(p=>p.userId===uid);if(!p)return;if(room.status!=="WAITING")return socket.emit("error:message",{message:"Room is not waiting for players"});p.ready=Boolean(ready);emitRoom(io,room);if(room.players.length>=2&&room.players.every(x=>x.ready)){try{const game=startRoom(room);for(const sid of io.sockets.adapter.rooms.get(room.roomId)||[])io.sockets.sockets.get(sid)?.emit("room:started",{room:publicRoom(room),game:{...game,players:game.players.map(p=>({...p,board:[]}))}});for(const sid of io.sockets.adapter.rooms.get(room.roomId)||[])io.sockets.sockets.get(sid)?.join(game.roomId);}catch(e){socket.emit("error:message",{message:e.message});}}});
-
-    socket.on("room:start",({roomId})=>{try{const room=store.rooms.get(normalizeRoomId(roomId));if(!room)throw new Error("Room not found");if(room.hostId!==uid)throw new Error("Only the host can start");const game=startRoom(room);for(const sid of io.sockets.adapter.rooms.get(room.roomId)||[])io.sockets.sockets.get(sid)?.emit("room:started",{room:publicRoom(room),game:{...game,players:game.players.map(p=>({...p,board:[]}))}});}catch(e){socket.emit("error:message",{message:e.message});}});
-
-    socket.on("room:invite",({roomId,targetUserId})=>{try{const room=store.rooms.get(normalizeRoomId(roomId));if(!room)throw new Error("Room not found");if(room.status!=="WAITING")throw new Error("Game already started");if(!room.players.some(p=>p.userId===uid))throw new Error("You are not a room member");if(room.players.length>=room.maxPlayers)throw new Error("Room is full");const targetId=String(targetUserId);const target=store.users.get(targetId);if(!target||!store.onlineSockets.has(targetId))throw new Error("Player is offline");if(room.players.some(p=>p.userId===targetId))throw new Error("Player is already in the room");const inviteId=id();store.roomInvites.set(inviteId,{inviteId,roomId:room.roomId,fromUserId:uid,toUserId:targetId,expiresAt:Date.now()+120000});const inviter=store.users.get(uid);for(const sid of socketsFor(targetId))io.to(sid).emit("room:invite",{inviteId,roomId:room.roomId,roomName:room.roomName,inviter:{userId:uid,uid:inviter?.uid,username:inviter?.username}});socket.emit("room:invite:response",{inviteId,targetUserId:targetId,accepted:null,message:`Invitation sent to ${target.username}.`});}catch(e){socket.emit("error:message",{message:e.message});}});
-
-    socket.on("room:invite:accept",({inviteId})=>{try{const inv=store.roomInvites.get(String(inviteId));if(!inv||inv.toUserId!==uid)throw new Error("Invitation is no longer valid");if(inv.expiresAt<Date.now()){store.roomInvites.delete(inviteId);throw new Error("Invitation expired");}const room=store.rooms.get(inv.roomId);if(!room)throw new Error("Room no longer exists");if(room.status!=="WAITING")throw new Error("Game already started");if(room.players.length>=room.maxPlayers)throw new Error("Room is full");const user=store.users.get(uid);if(!room.players.some(p=>p.userId===uid))room.players.push({userId:uid,uid:user.uid,username:user.username,ready:false});store.roomInvites.delete(inviteId);socket.join(room.roomId);emitRoom(io,room);socket.emit("room:joined",{inviteId,room:publicRoom(room)});for(const sid of socketsFor(inv.fromUserId))io.to(sid).emit("room:invite:response",{inviteId,targetUserId:uid,accepted:true,message:`${user.username} accepted your room invitation.`});}catch(e){socket.emit("error:message",{message:e.message});}});
-    socket.on("room:invite:reject",({inviteId})=>{const inv=store.roomInvites.get(String(inviteId));if(!inv||inv.toUserId!==uid)return;store.roomInvites.delete(inviteId);const user=store.users.get(uid);for(const sid of socketsFor(inv.fromUserId))io.to(sid).emit("room:invite:response",{inviteId,targetUserId:uid,accepted:false,message:`${user?.username||"Player"} rejected your room invitation.`});});
-
-    socket.on("room:rematch",({roomId})=>{try{const room=store.rooms.get(normalizeRoomId(roomId));if(!room)throw new Error("Room not found");if(room.status!=="FINISHED"&&room.status!=="PLAYING")throw new Error("Rematch is not available yet");room.rematchReady=room.rematchReady||new Set();room.rematchReady.add(uid);io.to(room.roomId).emit("room:rematch:update",{count:room.rematchReady.size,total:room.players.length});if(room.rematchReady.size===room.players.length){room.status="WAITING";for(const p of room.players)p.ready=true;const game=startRoom(room);for(const sid of io.sockets.adapter.rooms.get(room.roomId)||[])io.sockets.sockets.get(sid)?.emit("room:started",{room:publicRoom(room),game:{...game,players:game.players.map(p=>({...p,board:[]}))}});}}catch(e){socket.emit("error:message",{message:e.message});}});
-
-    socket.on("game:join",({gameId})=>{const game=store.games.get(gameId);if(!game||!game.players.some(p=>p.userId===uid))return;socket.join(game.roomId);socket.emit("game:state",{game:publicGame(game,uid)});});
-    socket.on("game:boardSubmit",({gameId,board})=>{try{const game=store.games.get(gameId);if(!game)throw new Error("Game not found");submitBoard(game,uid,board);for(const sid of io.sockets.adapter.rooms.get(game.roomId)||[]){const client=io.sockets.sockets.get(sid);client?.emit("game:state",{game:publicGame(game,String(client.user.sub))});}}catch(e){socket.emit("error:message",{message:e.message});}});
-    socket.on("game:numberCall",({gameId,number})=>{try{const game=store.games.get(gameId);if(!game)throw new Error("Game not found");const result=callNumber(game,uid,Number(number));if(result.game.status==="FINISHED"){finishToHistory(result.game);const room=store.rooms.get(result.game.roomId);if(room)room.status="FINISHED";}for(const sid of io.sockets.adapter.rooms.get(game.roomId)||[]){const client=io.sockets.sockets.get(sid);client?.emit("game:move",{game:publicGame(result.game,String(client.user.sub)),actor:result.actor,number:result.number,resultEvent:result.resultEvent});}}catch(e){socket.emit("error:message",{message:e.message});}});
-    socket.on("game:reconnect",({gameId})=>{const game=store.games.get(gameId);if(game&&game.players.some(p=>p.userId===uid)){socket.join(game.roomId);socket.emit("game:state",{game:publicGame(game,uid)});}});
-    socket.on("disconnect",()=>{const set=store.onlineSockets.get(uid);if(set){set.delete(socket.id);if(set.size===0)store.onlineSockets.delete(uid);}emitPresence(io);});
+function emitRoom(io, room) {
+  io.to(room.roomId).emit("room:update", {
+    room: publicRoom(room),
+    gameId: room.gameId || null
   });
->>>>>>> Stashed changes
+}
+
+
+/*
+  Send a player's own board only to that player.
+
+  Other players should not receive another player's board.
+*/
+function publicGame(game, userId) {
+  return {
+    ...game,
+
+    players: game.players.map(player => {
+      const isCurrentUser =
+        String(player.userId) === String(userId);
+
+      return {
+        ...player,
+        board: isCurrentUser
+          ? player.board
+          : []
+      };
+    })
+  };
+}
+
+
+function finishToHistory(game) {
+  const finalRanking = [...game.players]
+    .sort(
+      (a, b) =>
+        (a.rank ?? 999) -
+        (b.rank ?? 999)
+    )
+    .map(player => ({
+      userId: player.userId,
+      uid: player.uid,
+      username: player.username,
+      rank: player.rank,
+      status: player.status,
+      points: player.points,
+      completedLines: player.completedLines
+    }));
+
+
+  store.histories.set(game.gameId, {
+    gameId: game.gameId,
+    roomId: game.roomId,
+    playerCount: game.playerCount,
+    startedAt: game.startedAt,
+    endedAt: game.endedAt,
+
+    winner:
+      game.players.find(
+        player => player.rank === 1
+      )?.username || null,
+
+    drawPlayers: game.players
+      .filter(player => player.status === "DRAW")
+      .map(player => player.username),
+
+    outPlayer:
+      game.players.find(
+        player => player.status === "OUT"
+      )?.username || null,
+
+    finalRanking
+  });
+}
+
+
+function emitGameToRoom(io, eventName, game, extra = {}) {
+  const socketIds =
+    io.sockets.adapter.rooms.get(game.roomId) || [];
+
+  for (const socketId of socketIds) {
+    const client =
+      io.sockets.sockets.get(socketId);
+
+    if (!client) continue;
+
+    const currentUserId = String(
+      client.user?.sub || ""
+    );
+
+    client.emit(eventName, {
+      game: publicGame(game, currentUserId),
+      ...extra
+    });
+  }
+}
+
+
+function startGameForRoom(io, room) {
+  const game = startRoom(room);
+
+  const socketIds =
+    io.sockets.adapter.rooms.get(room.roomId) || [];
+
+  for (const socketId of socketIds) {
+    const client =
+      io.sockets.sockets.get(socketId);
+
+    if (!client) continue;
+
+    client.join(game.roomId);
+
+    client.emit("room:started", {
+      room: publicRoom(room),
+
+      game: {
+        ...game,
+
+        players: game.players.map(player => ({
+          ...player,
+          board: []
+        }))
+      }
+    });
+  }
+
+  return game;
+}
+
+
+export function configureSockets(io) {
+
+  /*
+    SOCKET AUTHENTICATION
+  */
+  io.use((socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token;
+
+      if (!token) {
+        return next(
+          new Error("Authentication required")
+        );
+      }
+
+      socket.user = verifyToken(token);
+
+      next();
+
+    } catch (error) {
+      next(
+        new Error("Invalid socket authentication")
+      );
+    }
+  });
+
+
+  /*
+    SOCKET CONNECTION
+  */
+  io.on("connection", socket => {
+
+    const userId =
+      String(socket.user.sub);
+
+
+    /*
+      ONLINE PLAYER TRACKING
+    */
+    if (!store.onlineSockets.has(userId)) {
+      store.onlineSockets.set(
+        userId,
+        new Set()
+      );
+    }
+
+    store.onlineSockets
+      .get(userId)
+      .add(socket.id);
+
+
+    socket.emit("server:ready", {
+      message:
+        "BINGO real-time server connected"
+    });
+
+
+    emitPresence(io);
+
+
+    /*
+      ROOM JOIN
+    */
+    socket.on(
+      "room:join",
+      ({ roomId }, ack) => {
+
+        const normalizedRoomId =
+          normalizeRoomId(roomId);
+
+        const room =
+          store.rooms.get(normalizedRoomId);
+
+
+        if (!room) {
+          const response = {
+            ok: false,
+            message: "Room not found"
+          };
+
+          socket.emit(
+            "error:message",
+            {
+              message: response.message
+            }
+          );
+
+          ack?.(response);
+
+          return;
+        }
+
+
+        const isMember =
+          room.players.some(
+            player =>
+              String(player.userId) === userId
+          );
+
+
+        if (!isMember) {
+          const response = {
+            ok: false,
+            message:
+              "You are not a room member"
+          };
+
+          socket.emit(
+            "error:message",
+            {
+              message: response.message
+            }
+          );
+
+          ack?.(response);
+
+          return;
+        }
+
+
+        socket.join(room.roomId);
+
+        emitRoom(io, room);
+
+        ack?.({
+          ok: true,
+          room: publicRoom(room)
+        });
+      }
+    );
+
+
+    /*
+      LEAVE ROOM
+    */
+    socket.on(
+      "room:leave",
+      ({ roomId }) => {
+
+        const room =
+          store.rooms.get(
+            normalizeRoomId(roomId)
+          );
+
+        if (!room) return;
+
+
+        room.players =
+          room.players.filter(
+            player =>
+              String(player.userId) !== userId
+          );
+
+
+        room.rematchReady?.delete(userId);
+
+
+        if (
+          String(room.hostId) === userId &&
+          room.players.length > 0
+        ) {
+          room.hostId =
+            room.players[0].userId;
+        }
+
+
+        if (room.players.length === 0) {
+
+          store.rooms.delete(
+            room.roomId
+          );
+
+        } else {
+
+          room.status = "WAITING";
+
+          room.gameId = null;
+
+          for (
+            const player of room.players
+          ) {
+            player.ready = false;
+          }
+
+          emitRoom(io, room);
+        }
+
+
+        socket.leave(room.roomId);
+      }
+    );
+
+
+    /*
+      PLAYER READY
+    */
+    socket.on(
+      "room:ready",
+      ({ roomId, ready }) => {
+
+        const room =
+          store.rooms.get(
+            normalizeRoomId(roomId)
+          );
+
+        if (!room) return;
+
+
+        if (
+          room.status !== "WAITING"
+        ) {
+          socket.emit(
+            "error:message",
+            {
+              message:
+                "Room is not waiting for players"
+            }
+          );
+
+          return;
+        }
+
+
+        const player =
+          room.players.find(
+            item =>
+              String(item.userId) === userId
+          );
+
+
+        if (!player) return;
+
+
+        player.ready = Boolean(ready);
+
+
+        emitRoom(io, room);
+
+
+        /*
+          AUTO START
+
+          Game automatically starts when:
+          - minimum 2 players
+          - everyone is ready
+        */
+        const everyoneReady =
+          room.players.length >= 2 &&
+          room.players.every(
+            item => item.ready
+          );
+
+
+        if (!everyoneReady) return;
+
+
+        try {
+
+          startGameForRoom(io, room);
+
+        } catch (error) {
+
+          console.error(
+            "Auto start game error:",
+            error
+          );
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to start game"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      HOST START GAME
+
+      Kept for manual start compatibility.
+    */
+    socket.on(
+      "room:start",
+      ({ roomId }) => {
+
+        try {
+
+          const room =
+            store.rooms.get(
+              normalizeRoomId(roomId)
+            );
+
+
+          if (!room) {
+            throw new Error(
+              "Room not found"
+            );
+          }
+
+
+          if (
+            String(room.hostId) !== userId
+          ) {
+            throw new Error(
+              "Only the host can start"
+            );
+          }
+
+
+          if (
+            room.players.length < 2
+          ) {
+            throw new Error(
+              "At least 2 players are required"
+            );
+          }
+
+
+          if (
+            !room.players.every(
+              player => player.ready
+            )
+          ) {
+            throw new Error(
+              "All players must be ready"
+            );
+          }
+
+
+          startGameForRoom(io, room);
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to start game"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      INVITE PLAYER
+    */
+    socket.on(
+      "room:invite",
+      ({ roomId, targetUserId }) => {
+
+        try {
+
+          const room =
+            store.rooms.get(
+              normalizeRoomId(roomId)
+            );
+
+
+          if (!room) {
+            throw new Error(
+              "Room not found"
+            );
+          }
+
+
+          if (
+            room.status !== "WAITING"
+          ) {
+            throw new Error(
+              "Game already started"
+            );
+          }
+
+
+          const isRoomMember =
+            room.players.some(
+              player =>
+                String(player.userId) === userId
+            );
+
+
+          if (!isRoomMember) {
+            throw new Error(
+              "You are not a room member"
+            );
+          }
+
+
+          if (
+            room.players.length >=
+            room.maxPlayers
+          ) {
+            throw new Error(
+              "Room is full"
+            );
+          }
+
+
+          const targetId =
+            String(targetUserId);
+
+
+          const target =
+            store.users.get(targetId);
+
+
+          if (
+            !target ||
+            !store.onlineSockets.has(targetId)
+          ) {
+            throw new Error(
+              "Player is offline"
+            );
+          }
+
+
+          const alreadyJoined =
+            room.players.some(
+              player =>
+                String(player.userId) === targetId
+            );
+
+
+          if (alreadyJoined) {
+            throw new Error(
+              "Player is already in the room"
+            );
+          }
+
+
+          const inviteId = id();
+
+
+          store.roomInvites.set(
+            inviteId,
+            {
+              inviteId,
+
+              roomId: room.roomId,
+
+              fromUserId: userId,
+
+              toUserId: targetId,
+
+              expiresAt:
+                Date.now() + 120000
+            }
+          );
+
+
+          const inviter =
+            store.users.get(userId);
+
+
+          for (
+            const socketId of socketsFor(targetId)
+          ) {
+            io.to(socketId).emit(
+              "room:invite",
+              {
+                inviteId,
+
+                roomId: room.roomId,
+
+                roomName: room.roomName,
+
+                inviter: {
+                  userId,
+
+                  uid: inviter?.uid,
+
+                  username:
+                    inviter?.username
+                }
+              }
+            );
+          }
+
+
+          socket.emit(
+            "room:invite:response",
+            {
+              inviteId,
+
+              targetUserId: targetId,
+
+              accepted: null,
+
+              message:
+                `Invitation sent to ${target.username}.`
+            }
+          );
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to send invitation"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      ACCEPT INVITATION
+    */
+    socket.on(
+      "room:invite:accept",
+      ({ inviteId }) => {
+
+        try {
+
+          const invitation =
+            store.roomInvites.get(
+              String(inviteId)
+            );
+
+
+          if (
+            !invitation ||
+            String(invitation.toUserId) !==
+              userId
+          ) {
+            throw new Error(
+              "Invitation is no longer valid"
+            );
+          }
+
+
+          if (
+            invitation.expiresAt < Date.now()
+          ) {
+
+            store.roomInvites.delete(
+              String(inviteId)
+            );
+
+            throw new Error(
+              "Invitation expired"
+            );
+          }
+
+
+          const room =
+            store.rooms.get(
+              invitation.roomId
+            );
+
+
+          if (!room) {
+            throw new Error(
+              "Room no longer exists"
+            );
+          }
+
+
+          if (
+            room.status !== "WAITING"
+          ) {
+            throw new Error(
+              "Game already started"
+            );
+          }
+
+
+          if (
+            room.players.length >=
+            room.maxPlayers
+          ) {
+            throw new Error(
+              "Room is full"
+            );
+          }
+
+
+          const user =
+            store.users.get(userId);
+
+
+          if (!user) {
+            throw new Error(
+              "User not found"
+            );
+          }
+
+
+          const alreadyJoined =
+            room.players.some(
+              player =>
+                String(player.userId) === userId
+            );
+
+
+          if (!alreadyJoined) {
+
+            room.players.push({
+              userId,
+
+              uid: user.uid,
+
+              username:
+                user.username,
+
+              ready: false
+            });
+          }
+
+
+          store.roomInvites.delete(
+            String(inviteId)
+          );
+
+
+          socket.join(
+            room.roomId
+          );
+
+
+          emitRoom(io, room);
+
+
+          socket.emit(
+            "room:joined",
+            {
+              inviteId:
+                String(inviteId),
+
+              room:
+                publicRoom(room)
+            }
+          );
+
+
+          for (
+            const socketId of socketsFor(
+              invitation.fromUserId
+            )
+          ) {
+
+            io.to(socketId).emit(
+              "room:invite:response",
+              {
+                inviteId:
+                  String(inviteId),
+
+                targetUserId:
+                  userId,
+
+                accepted: true,
+
+                message:
+                  `${user.username} accepted your room invitation.`
+              }
+            );
+          }
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to accept invitation"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      REJECT INVITATION
+    */
+    socket.on(
+      "room:invite:reject",
+      ({ inviteId }) => {
+
+        const invitation =
+          store.roomInvites.get(
+            String(inviteId)
+          );
+
+
+        if (
+          !invitation ||
+          String(invitation.toUserId) !==
+            userId
+        ) {
+          return;
+        }
+
+
+        store.roomInvites.delete(
+          String(inviteId)
+        );
+
+
+        const user =
+          store.users.get(userId);
+
+
+        for (
+          const socketId of socketsFor(
+            invitation.fromUserId
+          )
+        ) {
+
+          io.to(socketId).emit(
+            "room:invite:response",
+            {
+              inviteId:
+                invitation.inviteId,
+
+              targetUserId:
+                userId,
+
+              accepted: false,
+
+              message:
+                `${user?.username || "Player"} rejected your room invitation.`
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      REMATCH
+    */
+    socket.on(
+      "room:rematch",
+      ({ roomId }) => {
+
+        try {
+
+          const room =
+            store.rooms.get(
+              normalizeRoomId(roomId)
+            );
+
+
+          if (!room) {
+            throw new Error(
+              "Room not found"
+            );
+          }
+
+
+          if (
+            room.status !== "FINISHED" &&
+            room.status !== "PLAYING"
+          ) {
+            throw new Error(
+              "Rematch is not available yet"
+            );
+          }
+
+
+          room.rematchReady =
+            room.rematchReady ||
+            new Set();
+
+
+          room.rematchReady.add(
+            userId
+          );
+
+
+          io.to(room.roomId).emit(
+            "room:rematch:update",
+            {
+              count:
+                room.rematchReady.size,
+
+              total:
+                room.players.length
+            }
+          );
+
+
+          if (
+            room.rematchReady.size ===
+            room.players.length
+          ) {
+
+            room.rematchReady.clear();
+
+
+            room.status = "WAITING";
+
+
+            for (
+              const player of room.players
+            ) {
+              player.ready = true;
+            }
+
+
+            startGameForRoom(
+              io,
+              room
+            );
+          }
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to start rematch"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      JOIN GAME SOCKET ROOM
+    */
+    socket.on(
+      "game:join",
+      ({ gameId }) => {
+
+        const game =
+          store.games.get(gameId);
+
+
+        if (!game) return;
+
+
+        const isPlayer =
+          game.players.some(
+            player =>
+              String(player.userId) === userId
+          );
+
+
+        if (!isPlayer) return;
+
+
+        socket.join(
+          game.roomId
+        );
+
+
+        socket.emit(
+          "game:state",
+          {
+            game:
+              publicGame(
+                game,
+                userId
+              )
+          }
+        );
+      }
+    );
+
+
+    /*
+      SUBMIT BINGO BOARD
+    */
+    socket.on(
+      "game:boardSubmit",
+      ({ gameId, board }) => {
+
+        try {
+
+          const game =
+            store.games.get(gameId);
+
+
+          if (!game) {
+            throw new Error(
+              "Game not found"
+            );
+          }
+
+
+          submitBoard(
+            game,
+            userId,
+            board
+          );
+
+
+          emitGameToRoom(
+            io,
+            "game:state",
+            game
+          );
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to submit board"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      CALL NUMBER
+    */
+    socket.on(
+      "game:numberCall",
+      ({ gameId, number }) => {
+
+        try {
+
+          const game =
+            store.games.get(gameId);
+
+
+          if (!game) {
+            throw new Error(
+              "Game not found"
+            );
+          }
+
+
+          const result =
+            callNumber(
+              game,
+              userId,
+              Number(number)
+            );
+
+
+          if (
+            result.game.status ===
+            "FINISHED"
+          ) {
+
+            finishToHistory(
+              result.game
+            );
+
+
+            const room =
+              store.rooms.get(
+                result.game.roomId
+              );
+
+
+            if (room) {
+              room.status =
+                "FINISHED";
+            }
+          }
+
+
+          emitGameToRoom(
+            io,
+            "game:move",
+            result.game,
+            {
+              actor:
+                result.actor,
+
+              number:
+                result.number,
+
+              resultEvent:
+                result.resultEvent
+            }
+          );
+
+        } catch (error) {
+
+          socket.emit(
+            "error:message",
+            {
+              message:
+                error.message ||
+                "Unable to call number"
+            }
+          );
+        }
+      }
+    );
+
+
+    /*
+      RECONNECT TO GAME
+    */
+    socket.on(
+      "game:reconnect",
+      ({ gameId }) => {
+
+        const game =
+          store.games.get(gameId);
+
+
+        if (!game) return;
+
+
+        const isPlayer =
+          game.players.some(
+            player =>
+              String(player.userId) === userId
+          );
+
+
+        if (!isPlayer) return;
+
+
+        socket.join(
+          game.roomId
+        );
+
+
+        socket.emit(
+          "game:state",
+          {
+            game:
+              publicGame(
+                game,
+                userId
+              )
+          }
+        );
+      }
+    );
+
+
+    /*
+      DISCONNECT
+    */
+    socket.on(
+      "disconnect",
+      () => {
+
+        const userSockets =
+          store.onlineSockets.get(
+            userId
+          );
+
+
+        if (userSockets) {
+
+          userSockets.delete(
+            socket.id
+          );
+
+
+          if (
+            userSockets.size === 0
+          ) {
+            store.onlineSockets.delete(
+              userId
+            );
+          }
+        }
+
+
+        emitPresence(io);
+      }
+    );
+
+  });
 }
