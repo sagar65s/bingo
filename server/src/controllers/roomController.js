@@ -8,25 +8,28 @@ import { makeGame } from '../services/gameService.js';
 const cleanId = v => String(v ?? '').replace(/\D/g, '').slice(0, 6);
 const key = v => String(v ?? '');
 
-// Always resolve the authenticated user from the current JWT subject.
-// This prevents a previous account's user object from becoming the host
-// when another account creates a new room.
-async function getCurrentUser(req) {
-  const authId = key(req.auth?.sub);
-  if (!authId) return null;
-
-  let user = store.users.get(authId);
-  if (user) return user;
-
-  if (mongoose.connection.readyState === 1) {
+// Resolve the authenticated account from the JWT only. Never use a player
+// object from another room as the creator identity.
+async function canonicalUser(authId) {
+  const id = key(authId);
+  if (!id) return null;
+  let user = store.users.get(id);
+  if (!user && mongoose.connection.readyState === 1) {
     try {
-      user = await User.findById(authId).lean();
-      if (user) store.users.set(authId, user);
+      user = await User.findById(id).lean();
+      if (user) store.users.set(id, user);
     } catch {
       return null;
     }
   }
   return user || null;
+}
+
+// Always resolve the authenticated user from the current JWT subject.
+// This prevents a previous account's user object from becoming the host
+// when another account creates a new room.
+async function getCurrentUser(req) {
+  return canonicalUser(req.auth?.sub);
 }
 
 export async function createRoom(req, res) {
@@ -43,6 +46,11 @@ export async function createRoom(req, res) {
   // The creator of THIS room is ALWAYS the host of THIS room.
   // Never reuse hostId from another room.
   const creatorId = key(req.auth.sub);
+  // If the token subject and resolved user disagree, reject instead of
+  // accidentally creating a room for a stale account.
+  if (key(user._id) !== creatorId) {
+    return res.status(401).json({ message: 'Account identity changed. Please log in again.' });
+  }
   let roomId = roomCode();
   while (store.rooms.has(roomId)) roomId = roomCode();
 
