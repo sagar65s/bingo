@@ -59,6 +59,7 @@ export async function createRoom(req, res) {
     roomName: String(req.body?.roomName || 'Friends Room').trim().slice(0, 50) || 'Friends Room',
     passwordHash: await hashPassword(String(req.body?.password || '')),
     hostId: creatorId,
+    creatorUserId: creatorId,
     maxPlayers: count,
     status: 'WAITING',
     players: [{
@@ -117,11 +118,13 @@ export function publicRoom(room) {
   // Keep hostId strictly tied to a current member. If an old/stale host id
   // somehow exists, elect the first remaining member as the new host.
   const members = room.players || [];
-  let hostId = key(room.hostId);
+  let hostId = key(room.hostId || room.creatorUserId);
   if (!members.some(p => key(p.userId) === hostId)) {
     hostId = members.length ? key(members[0].userId) : null;
     room.hostId = hostId;
   }
+  // Keep creator identity for debugging/state consistency; it never replaces a valid host.
+  room.creatorUserId = key(room.creatorUserId || hostId);
 
   return {
     roomId: room.roomId,

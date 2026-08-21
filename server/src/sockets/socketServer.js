@@ -12,15 +12,18 @@ export function configureSockets(io){io.use((s,n)=>{try{const t=s.handshake.auth
  socket.on('room:join',({roomId},ack)=>{
    const room=store.rooms.get(norm(roomId));
    if(!room)return ack?.({ok:false,message:'Room not found'});
-   if(!room.players.some(p=>String(p.userId)===me))return ack?.({ok:false,message:'You are not a room member'});
-   // One active lobby room per socket. Leaving old Socket.IO rooms prevents an
-   // update from an old room overwriting the newly created room on the client.
+   const member=room.players.find(p=>String(p.userId)===me);
+   if(!member)return ack?.({ok:false,message:'You are not a room member'});
    const previous=socket.data.activeRoomId;
    if(previous && previous!==room.roomId)socket.leave(previous);
    socket.join(room.roomId);
    socket.data.activeRoomId=room.roomId;
-   emitRoom(io,room);
-   ack?.({ok:true,room:publicRoom(room)});
+   const safeRoom=publicRoom(room);
+   // Send the authoritative room directly to the joining socket first.
+   // This avoids an old room broadcast winning a client-side race.
+   ack?.({ok:true,room:safeRoom});
+   socket.emit('room:update',{room:safeRoom,source:'join'});
+   socket.to(room.roomId).emit('room:update',{room:safeRoom,source:'join'});
  });
  socket.on('room:leave',({roomId})=>{const room=store.rooms.get(norm(roomId));if(!room)return;const wasHost=String(room.hostId)===me;room.players=room.players.filter(p=>String(p.userId)!==me);if(!room.players.length){store.rooms.delete(room.roomId);socket.leave(room.roomId);if(socket.data.activeRoomId===room.roomId)socket.data.activeRoomId=null;return;}if(wasHost){const onlineMember=room.players.find(p=>store.onlineSockets.has(String(p.userId)));room.hostId=String((onlineMember||room.players[0]).userId);}room.status='WAITING';room.gameId=null;room.players.forEach(p=>p.ready=false);emitRoom(io,room);socket.leave(room.roomId);if(socket.data.activeRoomId===room.roomId)socket.data.activeRoomId=null;});
  socket.on('room:ready',({roomId,ready})=>{const room=store.rooms.get(norm(roomId));const p=room?.players.find(x=>String(x.userId)===me);if(!p)return;p.ready=!!ready;emitRoom(io,room);});

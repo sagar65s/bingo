@@ -10,9 +10,9 @@ function GameApp({user,logout}){const sock=useRef(),activeRoomId=useRef(null),[r
  useEffect(()=>{const s=createSocket();sock.current=s;window.__bingoSocket=s;const sync=e=>setOnline(e.players||[]);s.on('presence:list',sync);s.on('presence:update',sync);s.on('error:message',e=>setNotice(e.message));s.on('room:update',e=>{
   const incoming=String(e?.room?.roomId||'');
   if(!incoming)return;
-  // Ignore broadcasts from a room this client has already left.
-  if(activeRoomId.current && incoming!==String(activeRoomId.current))return;
-  activeRoomId.current=incoming;
+  // A socket is allowed to render only its explicitly active room.
+  // Never let a late update from a previously left room overwrite it.
+  if(!activeRoomId.current || incoming!==String(activeRoomId.current))return;
   setRoom(e.room);
 });s.on('room:joined',e=>{
   activeRoomId.current=String(e.room.roomId);
@@ -22,13 +22,15 @@ function GameApp({user,logout}){const sock=useRef(),activeRoomId=useRef(null),[r
   setRoom(e.room);setGame(e.game);setBoard(null);s.emit('game:join',{gameId:e.game.gameId})});const gs=e=>{setGame(e.game);const me=e.game.players.find(p=>String(p.userId)===String(user._id));if(me?.board?.length)setBoard(me.board.map(r=>r.map(c=>String(c?.value??''))));if(e.game.status==='FINISHED')refresh()};s.on('game:state',gs);s.on('game:move',gs);refresh();const t=setInterval(refresh,30000);return()=>{clearInterval(t);activeRoomId.current=null;s.disconnect();if(window.__bingoSocket===s)delete window.__bingoSocket}},[user._id]);
  const enterSocket=r=>{
    const roomId=String(r.roomId);
+   // Lock the client to this room before any socket broadcast can arrive.
    activeRoomId.current=roomId;
    sock.current.emit('room:join',{roomId},ack=>{
      if(!ack?.ok){
-       if(activeRoomId.current===roomId) activeRoomId.current=null;
+       if(activeRoomId.current===roomId){activeRoomId.current=null;setRoom(null)}
        setNotice(ack?.message||'Unable to connect to room');
        return;
      }
+     // Use the server acknowledgement as the single authoritative initial state.
      activeRoomId.current=String(ack.room.roomId);
      setRoom(ack.room);
    });
@@ -45,7 +47,6 @@ function GameApp({user,logout}){const sock=useRef(),activeRoomId=useRef(null),[r
      setRoom(null);setGame(null);setBoard(null);
      const d=await api('/rooms',{method:'POST',body:JSON.stringify({roomName:msgRoom,password:pw,maxPlayers:Number(players)})});
      activeRoomId.current=String(d.room.roomId);
-     setRoom(d.room);
      enterSocket(d.room);
      setNotice(`Room created. ID: ${d.room.roomId}`);
    }catch(e){setNotice(e.message)}
@@ -57,7 +58,6 @@ function GameApp({user,logout}){const sock=useRef(),activeRoomId=useRef(null),[r
      setRoom(null);setGame(null);setBoard(null);
      const d=await api('/rooms/join',{method:'POST',body:JSON.stringify({roomId:joinId,password:joinPw})});
      activeRoomId.current=String(d.room.roomId);
-     setRoom(d.room);
      enterSocket(d.room);
      setNotice('Joined room successfully');
    }catch(e){setNotice(e.message)}
