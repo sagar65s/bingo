@@ -1,12 +1,48 @@
 import mongoose from 'mongoose';
 import User from '../models/User.js';
-import { verifyToken } from '../utils/auth.js';import { store } from '../store/memoryStore.js';import { publicRoom,startRoom } from '../controllers/roomController.js';import { submitBoard,callNumber,makeGame } from '../services/gameService.js';import { id } from '../utils/ids.js';
+import { verifyToken } from '../utils/auth.js';import { store } from '../store/memoryStore.js';import { publicRoom,startRoom } from '../controllers/roomController.js';import { submitBoard,callNumber,makeGame } from '../services/gameService.js';
+import { currentWeekKey } from '../controllers/playerController.js';import { id } from '../utils/ids.js';
 const norm=v=>String(v||'').replace(/\D/g,'').slice(0,6);const userSockets=id=>[...(store.onlineSockets.get(String(id))||[])];
 function onlineList(except){return [...store.users.values()].filter(u=>String(u._id)!==String(except)&&store.onlineSockets.has(String(u._id))).map(u=>({userId:String(u._id),uid:u.uid,username:u.username,online:true}));}
 function emitPresence(io){for(const s of io.sockets.sockets.values())s.emit('presence:list',{players:onlineList(s.user?.sub)});}
 function emitRoom(io,room){io.to(room.roomId).emit('room:update',{room:publicRoom(room)});}
 function publicGame(game,userId){return {...game,players:game.players.map(p=>({...p,board:String(p.userId)===String(userId)?p.board:[]}))};}
-async function persistScores(game){const finished=game.status==='FINISHED';for(const p of game.players){const u=store.users.get(String(p.userId));if(u){u.totalScore=(u.totalScore||0)+(p.points||0);u.totalGames=(u.totalGames||0)+1;if(p.rank===1)u.wins=(u.wins||0)+1;else if(finished)u.losses=(u.losses||0)+1;}if(mongoose.connection.readyState===1){await User.findByIdAndUpdate(p.userId,{$inc:{totalScore:p.points||0,totalGames:1,wins:p.rank===1?1:0,losses:finished&&p.rank!==1?1:0}}).catch(()=>{});}}}
+async function persistScores(game){
+  const week=currentWeekKey();
+  for(const p of game.players){
+    const points=Number(p.points)||0;
+    const isWinner=p.rank===1;
+    const isDraw=p.status==='DRAW';
+    const u=store.users.get(String(p.userId));
+    if(u){
+      if(u.scoreWeek!==week){u.scoreWeek=week;u.weeklyScore=0;}
+      u.weeklyScore=(u.weeklyScore||0)+points;
+      u.totalScore=(u.totalScore||0)+points;
+      u.totalGames=(u.totalGames||0)+1;
+      if(isWinner) u.wins=(u.wins||0)+1;
+      else if(!isDraw) u.losses=(u.losses||0)+1;
+    }
+    if(mongoose.connection.readyState===1){
+      await User.findByIdAndUpdate(p.userId,[
+        {$set:{
+          weeklyScore:{$cond:[{$eq:[{$ifNull:['$scoreWeek','']},week]},{$ifNull:['$weeklyScore',0]},0]},
+          scoreWeek:week,
+          totalScore:{$ifNull:['$totalScore',0]},
+          totalGames:{$ifNull:['$totalGames',0]},
+          wins:{$ifNull:['$wins',0]},
+          losses:{$ifNull:['$losses',0]}
+        }},
+        {$set:{
+          weeklyScore:{$add:['$weeklyScore',points]},
+          totalScore:{$add:['$totalScore',points]},
+          totalGames:{$add:['$totalGames',1]},
+          wins:{$add:['$wins',isWinner?1:0]},
+          losses:{$add:['$losses',(!isWinner&&!isDraw)?1:0]}
+        }}
+      ]).catch(()=>{});
+    }
+  }
+}
 function broadcastGame(io,game,event='game:state',extra={}){for(const sid of io.sockets.adapter.rooms.get(game.roomId)||[]){const s=io.sockets.sockets.get(sid);if(s)s.emit(event,{game:publicGame(game,s.user.sub),...extra});}}
 export function configureSockets(io){io.use((s,n)=>{try{const t=s.handshake.auth?.token;if(!t)return n(new Error('Authentication required'));s.user=verifyToken(t);n();}catch{return n(new Error('Invalid socket authentication'));}});io.on('connection',socket=>{const me=String(socket.user.sub);if(!store.onlineSockets.has(me))store.onlineSockets.set(me,new Set());store.onlineSockets.get(me).add(socket.id);emitPresence(io);
  socket.on('room:join',({roomId},ack)=>{

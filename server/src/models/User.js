@@ -8,6 +8,8 @@ const UserSchema = new mongoose.Schema({
   avatar: String,
   onlineStatus: { type:Boolean, default:false },
   totalScore: { type:Number, default:0 },
+  weeklyScore: { type:Number, default:0 },
+  scoreWeek: { type:String, default:"" },
   totalGames: { type:Number, default:0 },
   wins: { type:Number, default:0 },
   losses: { type:Number, default:0 }
