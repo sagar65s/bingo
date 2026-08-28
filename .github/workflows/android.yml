@@ -1,0 +1,55 @@
+name: Build BINGO Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm install
+
+      - name: Build frontend
+        working-directory: client
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        working-directory: client
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        working-directory: client/android
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        working-directory: client/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BINGO-Android-APK
+          path: client/android/app/build/outputs/apk/debug/app-debug.apk
