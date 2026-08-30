@@ -37,6 +37,19 @@ select {
     display: flex;
     align-items: center;
     gap: 11px;
+}
+
+.logo img {
+    width: 58px;
+    height: 58px;
+    object-fit: contain;
+    display: block;
+}
+
+/* .logo {
+    display: flex;
+    align-items: center;
+    gap: 11px;
     font-size: 1.15rem;
     letter-spacing: .08em
 }
@@ -51,7 +64,7 @@ select {
     font-style: normal;
     color: #06221e;
     font-weight: 1000
-}
+} */
 
 .user {
     display: flex;
